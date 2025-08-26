@@ -459,6 +459,7 @@ index d19f04a09b6939ddf8ce033bad05cb4db4051c73..57c66392fd751c72e2d2eec75dfcd2a3
      const remainingQty = entries.reduce((a, o) => a + Math.max(0, o.e.expected - o.e.scanned), 0);
      const unknownQty = Array.from(state.unknown.values()).reduce((a, n) => a + n, 0);
  
+    
      // KPI counters
      els.kExpected.textContent = expectedDistinct;
      els.kExpectedQty.textContent = expectedQty;
@@ -484,6 +485,7 @@ index d19f04a09b6939ddf8ce033bad05cb4db4051c73..57c66392fd751c72e2d2eec75dfcd2a3
  
      // Full matched list sorted by SKU; compute status & visual row class
      const matched = entries.slice().sort((a,b)=> a.sku.localeCompare(b.sku));
+    const matched = entries.slice().sort((a,b)=> a.e.sku.localeCompare(b.e.sku));
      renderTable(els.matchedTable, matched.map(e => {
        const over = Math.max(0, e.scanned - e.expected);
        const status = over > 0 ? 'over' : (e.scanned < e.expected ? 'short' : 'ok');
@@ -509,63 +511,3 @@ diff --git a/inventory_compare_scanner_xlsx_scanned2.0.html b/inventory_compare_
 index d19f04a09b6939ddf8ce033bad05cb4db4051c73..57c66392fd751c72e2d2eec75dfcd2a328fe3488 100644
 --- a/inventory_compare_scanner_xlsx_scanned2.0.html
 +++ b/inventory_compare_scanner_xlsx_scanned2.0.html
-@@ -528,50 +534,58 @@
-     state.options.beep = els.optBeep.checked;
-     save();
-   }
-   [els.optCase, els.optTrim, els.optIgnoreWS, els.optDropNonAlnum, els.optStripZeros, els.optBeep]
-     .forEach(el => el.addEventListener('change', () => { setOptionsFromUI(); renderAll(); }));
- 
-   // Keep scan input focused for fast workflows
-   function focusScan(){ els.scanInput.focus({ preventScroll:true }); }
-   document.addEventListener('click', focusScan);
-   window.addEventListener('focus', focusScan);
- 
-   // Scan on Enter; barcode scanners typically send Enter at the end
-   els.scanInput.addEventListener('keydown', (e)=>{
-     if (e.key === 'Enter') {
-       const v = e.currentTarget.value; e.currentTarget.value='';
-       if (v) scan(v); e.preventDefault();
-     }
-   });
-   // Also handle cases where scanners send a literal \n in the buffer
-   els.scanInput.addEventListener('input', (e)=>{
-     const v = e.currentTarget.value;
-     if (v && v.endsWith('\\n')) { e.currentTarget.value = v.replace(/\\n+$/,''); if (e.currentTarget.value) scan(e.currentTarget.value); e.currentTarget.value=''; }
-   });
- 
-   // Buttons
-+  // Manual scan buttons in Remaining table
-+  els.remainingTable.addEventListener('click', e => {
-+    const btn = e.target.closest('button[data-action="scan"]');
-+    if (!btn) return;
-+    const entry = state.master.get(btn.dataset.norm);
-+    if (entry) scan(entry.sku);
-+  });
-+
-   els.undoBtn.addEventListener('click', undo);
-   els.clearBtn.addEventListener('click', ()=>{ if (!confirm('Clear current session (master, scans, options)?')) return;
-     state.master.clear(); state.unknown.clear(); state.history = []; save(); renderAll(); });
- 
-   // Export current reconciliation as CSV (includes unknowns at end)
-   els.exportBtn.addEventListener('click', ()=>{
-     const rows = [['sku','description','expected_qty','scanned_qty','over','status']];
-     for (const e of state.master.values()) {
-       const over = Math.max(0, e.scanned - e.expected);
-       const status = over > 0 ? 'OVER' : (e.scanned < e.expected ? 'SHORT' : 'OK');
-       rows.push([e.sku, e.desc || '', e.expected, e.scanned, over, status]);
-     }
-     if (state.unknown.size) { rows.push([]); rows.push(['unknown_sku','count']); for (const [sku,count] of state.unknown.entries()) rows.push([sku,count]); }
-     const csv = rows.map(r => r.map(cell => { const s = String(cell ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; }).join(',')).join('\n');
-     const blob = new Blob([csv], { type:'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='inventory_reconcile.csv'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url), 1000);
-   });
- 
-   // Loading master from file or pasted data
-   els.loadMasterBtn.addEventListener('click', async ()=>{
-     const f = els.masterFile.files?.[0]; if (!f) { alert('Choose a file first.'); return; }
-     try {
-       // Detect Excel by extension/MIME; otherwise treat as delimited text
-       if (/\.(xlsx|xls)$/i.test(f.name) || (f.type && (f.type.includes('sheet') || f.type.includes('excel')))) {
-         await loadExcel(f);
-       } else {
-
