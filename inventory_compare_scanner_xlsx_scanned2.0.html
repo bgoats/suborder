@@ -400,208 +400,172 @@
     if (auto.descIdx !== undefined) els.mapDesc.value = auto.descIdx;
     els.mapPreview.textContent = `Headers: ${headers.map(h=>`[${h}]`).join(' ')}`;
     els.mapModal.style.display = 'flex';
-  }
-  function closeMapper(){ els.mapModal.style.display = 'none'; }
+ diff --git a/inventory_compare_scanner_xlsx_scanned2.0.html b/inventory_compare_scanner_xlsx_scanned2.0.html
+index d19f04a09b6939ddf8ce033bad05cb4db4051c73..57c66392fd751c72e2d2eec75dfcd2a328fe3488 100644
+--- a/inventory_compare_scanner_xlsx_scanned2.0.html
++++ b/inventory_compare_scanner_xlsx_scanned2.0.html
+@@ -403,89 +403,95 @@
+   }
+   function closeMapper(){ els.mapModal.style.display = 'none'; }
+ 
+   /* ======= SCANNING / UNDO ======= */
+   function scan(value) {
+     const ts = new Date().toISOString();
+     const norm = normalize(value);
+     if (!norm) return;
+     const entry = state.master.get(norm);
+     if (entry) {
+       entry.scanned += 1; // increment known item
+       state.history.push({ type:'known', norm, ts });
+       flash('MATCH: ' + entry.sku, true); beep(true);
+     } else {
+       const prev = state.unknown.get(norm) || 0;
+       state.unknown.set(norm, prev + 1);
+       state.history.push({ type:'unknown', norm, ts });
+       flash('UNKNOWN: ' + value, false); beep(false);
+     }
+     // Prevent unbounded growth
+     if (state.history.length > 5000) state.history.shift();
+     save(); renderAll();
+   }
+ 
+   function undo() {
+-    // Revert the last scan/manual action (known/unknown/manual)
++    // Revert the last scan or manual action
+     const last = state.history.pop();
+     if (!last) return;
+     if (last.type === 'known') {
+-      const e = state.master.get(last.norm); if (e && e.scanned > 0) e.scanned -= 1;
+-    } else if (last.t
++      const e = state.master.get(last.norm);
++      if (e && e.scanned > 0) e.scanned -= 1;
++    } else if (last.type === 'unknown') {
++      const prev = state.unknown.get(last.norm) || 0;
++      if (prev <= 1) state.unknown.delete(last.norm); else state.unknown.set(last.norm, prev - 1);
++    }
++    save();
++    renderAll();
+   }
+ 
+   /* ======= RENDERING ======= */
+   function renderAll() {
+     // Work with [norm, entry] pairs so we can attach actions by normalized key
+     const kv = Array.from(state.master.entries());
+     const entries = kv.map(([norm, e]) => ({ norm, e }));
+ 
+     const expectedDistinct = entries.length;
+     const expectedQty = entries.reduce((a, o) => a + o.e.expected, 0);
+     const scannedQty = entries.reduce((a, o) => a + o.e.scanned, 0);
+     const remainingQty = entries.reduce((a, o) => a + Math.max(0, o.e.expected - o.e.scanned), 0);
+     const unknownQty = Array.from(state.unknown.values()).reduce((a, n) => a + n, 0);
+ 
+     // KPI counters
+     els.kExpected.textContent = expectedDistinct;
+     els.kExpectedQty.textContent = expectedQty;
+     els.kScannedQty.textContent = scannedQty;
+     els.kRemainingQty.textContent = remainingQty;
+     els.kUnknownQty.textContent = unknownQty;
+ 
+     // Remaining list: items still short, sorted by greatest remaining first
+     const remaining = entries
+       .filter(o => o.e.expected - o.e.scanned > 0)
+       .sort((a,b) => (b.e.expected - b.e.scanned) - (a.e.expected - a.e.scanned) || a.e.sku.localeCompare(b.e.sku));
+ 
+     renderTable(els.remainingTable, remaining.map(o => [
+       o.e.sku || '(no sku)',
+       o.e.desc || '',
+       String(o.e.scanned),
+       String(Math.max(0, o.e.expected - o.e.scanned)),
+-      // Action buttons: mark one as shot, or minus one
+-      `<div class="row"><button data-action="shot" data-norm="${o.norm}" class="primary">Shot</button><button data-action="minus" data-norm="${o.norm}">-1</button></div>`
++      // Action button: manually scan one unit
++      `<button data-action="scan" data-norm="${o.norm}" class="primary">Scan 1</button>`
+     ]));
+ 
+     // Full matched list sorted by SKU; compute status & visual row class
+     const matched = entries.slice().sort((a,b)=> a.sku.localeCompare(b.sku));
+     renderTable(els.matchedTable, matched.map(e => {
+       const over = Math.max(0, e.scanned - e.expected);
+       const status = over > 0 ? 'over' : (e.scanned < e.expected ? 'short' : 'ok');
+       return { rowClass: status, cells: [e.sku||'(no sku)', e.desc||'', String(e.expected), String(e.scanned), String(over), `<span class="pill ${status}">${status.toUpperCase()}</span>`] };
+     }), true);
+ 
+     // Unknown items ranked by frequency
+     const unkRows = Array.from(state.unknown.entries()).sort((a,b)=> b[1]-a[1]).map(([norm,count])=>[norm, String(count)]);
+     renderTable(els.unknownTable, unkRows);
+ 
+     // Recent history log (most recent first)
+     const logLines = state.history.slice(-50).map(h => {
+       const time = new Date(h.ts).toLocaleTimeString();
+       if (h.type === 'known') { const e = state.master.get(h.norm); return `[${time}] OK  → ${e ? e.sku : h.norm}`; }
+       else return `[${time}] ??? → ${h.norm}`;
+     });
+     els.log.textContent = logLines.reverse().join('\n');
+   }
+ 
+   // Helper to render any table body; supports optional rowClass via withClass
+   function renderTable(tbody, rows, withClass=false) {
+diff --git a/inventory_compare_scanner_xlsx_scanned2.0.html b/inventory_compare_scanner_xlsx_scanned2.0.html
+index d19f04a09b6939ddf8ce033bad05cb4db4051c73..57c66392fd751c72e2d2eec75dfcd2a328fe3488 100644
+--- a/inventory_compare_scanner_xlsx_scanned2.0.html
++++ b/inventory_compare_scanner_xlsx_scanned2.0.html
+@@ -528,50 +534,58 @@
+     state.options.beep = els.optBeep.checked;
+     save();
+   }
+   [els.optCase, els.optTrim, els.optIgnoreWS, els.optDropNonAlnum, els.optStripZeros, els.optBeep]
+     .forEach(el => el.addEventListener('change', () => { setOptionsFromUI(); renderAll(); }));
+ 
+   // Keep scan input focused for fast workflows
+   function focusScan(){ els.scanInput.focus({ preventScroll:true }); }
+   document.addEventListener('click', focusScan);
+   window.addEventListener('focus', focusScan);
+ 
+   // Scan on Enter; barcode scanners typically send Enter at the end
+   els.scanInput.addEventListener('keydown', (e)=>{
+     if (e.key === 'Enter') {
+       const v = e.currentTarget.value; e.currentTarget.value='';
+       if (v) scan(v); e.preventDefault();
+     }
+   });
+   // Also handle cases where scanners send a literal \n in the buffer
+   els.scanInput.addEventListener('input', (e)=>{
+     const v = e.currentTarget.value;
+     if (v && v.endsWith('\\n')) { e.currentTarget.value = v.replace(/\\n+$/,''); if (e.currentTarget.value) scan(e.currentTarget.value); e.currentTarget.value=''; }
+   });
+ 
+   // Buttons
++  // Manual scan buttons in Remaining table
++  els.remainingTable.addEventListener('click', e => {
++    const btn = e.target.closest('button[data-action="scan"]');
++    if (!btn) return;
++    const entry = state.master.get(btn.dataset.norm);
++    if (entry) scan(entry.sku);
++  });
++
+   els.undoBtn.addEventListener('click', undo);
+   els.clearBtn.addEventListener('click', ()=>{ if (!confirm('Clear current session (master, scans, options)?')) return;
+     state.master.clear(); state.unknown.clear(); state.history = []; save(); renderAll(); });
+ 
+   // Export current reconciliation as CSV (includes unknowns at end)
+   els.exportBtn.addEventListener('click', ()=>{
+     const rows = [['sku','description','expected_qty','scanned_qty','over','status']];
+     for (const e of state.master.values()) {
+       const over = Math.max(0, e.scanned - e.expected);
+       const status = over > 0 ? 'OVER' : (e.scanned < e.expected ? 'SHORT' : 'OK');
+       rows.push([e.sku, e.desc || '', e.expected, e.scanned, over, status]);
+     }
+     if (state.unknown.size) { rows.push([]); rows.push(['unknown_sku','count']); for (const [sku,count] of state.unknown.entries()) rows.push([sku,count]); }
+     const csv = rows.map(r => r.map(cell => { const s = String(cell ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; }).join(',')).join('\n');
+     const blob = new Blob([csv], { type:'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='inventory_reconcile.csv'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url), 1000);
+   });
+ 
+   // Loading master from file or pasted data
+   els.loadMasterBtn.addEventListener('click', async ()=>{
+     const f = els.masterFile.files?.[0]; if (!f) { alert('Choose a file first.'); return; }
+     try {
+       // Detect Excel by extension/MIME; otherwise treat as delimited text
+       if (/\.(xlsx|xls)$/i.test(f.name) || (f.type && (f.type.includes('sheet') || f.type.includes('excel')))) {
+         await loadExcel(f);
+       } else {
 
-  /* ======= SCANNING / UNDO ======= */
-  function scan(value) {
-    const ts = new Date().toISOString();
-    const norm = normalize(value);
-    if (!norm) return;
-    const entry = state.master.get(norm);
-    if (entry) {
-      entry.scanned += 1; // increment known item
-      state.history.push({ type:'known', norm, ts });
-      flash('MATCH: ' + entry.sku, true); beep(true);
-    } else {
-      const prev = state.unknown.get(norm) || 0;
-      state.unknown.set(norm, prev + 1);
-      state.history.push({ type:'unknown', norm, ts });
-      flash('UNKNOWN: ' + value, false); beep(false);
-    }
-    // Prevent unbounded growth
-    if (state.history.length > 5000) state.history.shift();
-    save(); renderAll();
-  }
-
-  function undo() {
-    // Revert the last scan/manual action (known/unknown/manual)
-    const last = state.history.pop();
-    if (!last) return;
-    if (last.type === 'known') {
-      const e = state.master.get(last.norm); if (e && e.scanned > 0) e.scanned -= 1;
-    } else if (last.t
-  }
-
-  /* ======= RENDERING ======= */
-  function renderAll() {
-    // Work with [norm, entry] pairs so we can attach actions by normalized key
-    const kv = Array.from(state.master.entries());
-    const entries = kv.map(([norm, e]) => ({ norm, e }));
-
-    const expectedDistinct = entries.length;
-    const expectedQty = entries.reduce((a, o) => a + o.e.expected, 0);
-    const scannedQty = entries.reduce((a, o) => a + o.e.scanned, 0);
-    const remainingQty = entries.reduce((a, o) => a + Math.max(0, o.e.expected - o.e.scanned), 0);
-    const unknownQty = Array.from(state.unknown.values()).reduce((a, n) => a + n, 0);
-
-    // KPI counters
-    els.kExpected.textContent = expectedDistinct;
-    els.kExpectedQty.textContent = expectedQty;
-    els.kScannedQty.textContent = scannedQty;
-    els.kRemainingQty.textContent = remainingQty;
-    els.kUnknownQty.textContent = unknownQty;
-
-    // Remaining list: items still short, sorted by greatest remaining first
-    const remaining = entries
-      .filter(o => o.e.expected - o.e.scanned > 0)
-      .sort((a,b) => (b.e.expected - b.e.scanned) - (a.e.expected - a.e.scanned) || a.e.sku.localeCompare(b.e.sku));
-
-    renderTable(els.remainingTable, remaining.map(o => [
-      o.e.sku || '(no sku)',
-      o.e.desc || '',
-      String(o.e.scanned),
-      String(Math.max(0, o.e.expected - o.e.scanned)),
-      // Action buttons: mark one as shot, or minus one
-      `<div class="row"><button data-action="shot" data-norm="${o.norm}" class="primary">Shot</button><button data-action="minus" data-norm="${o.norm}">-1</button></div>`
-    ]));
-
-    // Full matched list sorted by SKU; compute status & visual row class
-    const matched = entries.slice().sort((a,b)=> a.sku.localeCompare(b.sku));
-    renderTable(els.matchedTable, matched.map(e => {
-      const over = Math.max(0, e.scanned - e.expected);
-      const status = over > 0 ? 'over' : (e.scanned < e.expected ? 'short' : 'ok');
-      return { rowClass: status, cells: [e.sku||'(no sku)', e.desc||'', String(e.expected), String(e.scanned), String(over), `<span class="pill ${status}">${status.toUpperCase()}</span>`] };
-    }), true);
-
-    // Unknown items ranked by frequency
-    const unkRows = Array.from(state.unknown.entries()).sort((a,b)=> b[1]-a[1]).map(([norm,count])=>[norm, String(count)]);
-    renderTable(els.unknownTable, unkRows);
-
-    // Recent history log (most recent first)
-    const logLines = state.history.slice(-50).map(h => {
-      const time = new Date(h.ts).toLocaleTimeString();
-      if (h.type === 'known') { const e = state.master.get(h.norm); return `[${time}] OK  → ${e ? e.sku : h.norm}`; }
-      else return `[${time}] ??? → ${h.norm}`;
-    });
-    els.log.textContent = logLines.reverse().join('\n');
-  }
-
-  // Helper to render any table body; supports optional rowClass via withClass
-  function renderTable(tbody, rows, withClass=false) {
-    tbody.innerHTML = '';
-    for (const r of rows) {
-      const tr = document.createElement('tr');
-      if (withClass && r.rowClass) tr.className = r.rowClass;
-      const cells = withClass ? r.cells : r;
-      for (const c of cells) {
-        const td = document.createElement('td');
-        if (typeof c === 'string' && c.startsWith('<')) td.innerHTML = c; else td.textContent = c;
-        tr.appendChild(td);
-      }
-      tbody.appendChild(tr);
-    }
-  }
-
-  /* ======= FEEDBACK (BEEP/FLASH/TOAST) ======= */
-  let audioCtx = null;
-  function ensureAudio(){ if (!audioCtx){ try{ audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }catch{} } }
-  function beep(ok){ if(!state.options.beep) return; ensureAudio(); if(!audioCtx) return;
-    const duration = ok?0.08:0.18, freq= ok?850:220;
-    const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
-    osc.type = ok ? 'square' : 'sawtooth'; osc.frequency.value=freq; osc.connect(gain); gain.connect(audioCtx.destination);
-    gain.gain.setValueAtTime(0.001, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.06, audioCtx.currentTime+0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime+duration); osc.start(); osc.stop(audioCtx.currentTime+duration+0.02);
-  }
-  function flash(msg, ok){ const overlay = document.createElement('div'); overlay.style.cssText="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);z-index:50";
-    const bubble = document.createElement('div'); bubble.textContent = msg; bubble.style.cssText = "padding:14px 22px;border-radius:12px;font-size:18px;font-weight:700;border:1px solid var(--border);box-shadow:0 10px 40px rgba(0,0,0,0.35);background:" + (ok?"rgba(34,197,94,0.2)":"rgba(239,68,68,0.2)");
-    overlay.appendChild(bubble); document.body.appendChild(overlay); setTimeout(()=>overlay.remove(), 600); }
-  function toast(msg, ok){ flash(msg, ok); }
-
-  /* ======= OPTIONS HANDLING ======= */
-  function setOptionsFromUI() {
-    state.options.caseInsensitive = els.optCase.checked;
-    state.options.trim = els.optTrim.checked;
-    state.options.ignoreWhitespace = els.optIgnoreWS.checked;
-    state.options.dropNonAlnum = els.optDropNonAlnum.checked;
-    state.options.stripLeadingZeros = els.optStripZeros.checked;
-    state.options.beep = els.optBeep.checked;
-    save();
-  }
-  [els.optCase, els.optTrim, els.optIgnoreWS, els.optDropNonAlnum, els.optStripZeros, els.optBeep]
-    .forEach(el => el.addEventListener('change', () => { setOptionsFromUI(); renderAll(); }));
-
-  // Keep scan input focused for fast workflows
-  function focusScan(){ els.scanInput.focus({ preventScroll:true }); }
-  document.addEventListener('click', focusScan);
-  window.addEventListener('focus', focusScan);
-
-  // Scan on Enter; barcode scanners typically send Enter at the end
-  els.scanInput.addEventListener('keydown', (e)=>{
-    if (e.key === 'Enter') {
-      const v = e.currentTarget.value; e.currentTarget.value='';
-      if (v) scan(v); e.preventDefault();
-    }
-  });
-  // Also handle cases where scanners send a literal \n in the buffer
-  els.scanInput.addEventListener('input', (e)=>{
-    const v = e.currentTarget.value;
-    if (v && v.endsWith('\\n')) { e.currentTarget.value = v.replace(/\\n+$/,''); if (e.currentTarget.value) scan(e.currentTarget.value); e.currentTarget.value=''; }
-  });
-
-  // Buttons
-  els.undoBtn.addEventListener('click', undo);
-  els.clearBtn.addEventListener('click', ()=>{ if (!confirm('Clear current session (master, scans, options)?')) return;
-    state.master.clear(); state.unknown.clear(); state.history = []; save(); renderAll(); });
-
-  // Export current reconciliation as CSV (includes unknowns at end)
-  els.exportBtn.addEventListener('click', ()=>{
-    const rows = [['sku','description','expected_qty','scanned_qty','over','status']];
-    for (const e of state.master.values()) {
-      const over = Math.max(0, e.scanned - e.expected);
-      const status = over > 0 ? 'OVER' : (e.scanned < e.expected ? 'SHORT' : 'OK');
-      rows.push([e.sku, e.desc || '', e.expected, e.scanned, over, status]);
-    }
-    if (state.unknown.size) { rows.push([]); rows.push(['unknown_sku','count']); for (const [sku,count] of state.unknown.entries()) rows.push([sku,count]); }
-    const csv = rows.map(r => r.map(cell => { const s = String(cell ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; }).join(',')).join('\n');
-    const blob = new Blob([csv], { type:'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='inventory_reconcile.csv'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url), 1000);
-  });
-
-  // Loading master from file or pasted data
-  els.loadMasterBtn.addEventListener('click', async ()=>{
-    const f = els.masterFile.files?.[0]; if (!f) { alert('Choose a file first.'); return; }
-    try {
-      // Detect Excel by extension/MIME; otherwise treat as delimited text
-      if (/\.(xlsx|xls)$/i.test(f.name) || (f.type && (f.type.includes('sheet') || f.type.includes('excel')))) {
-        await loadExcel(f);
-      } else {
-        const text = await f.text(); const rows = parseDelimited(text); loadMasterFromRows(rows);
-      }
-    } catch (e) { alert(e.message || String(e)); }
-  });
-
-  els.loadPasteBtn.addEventListener('click', ()=>{
-    const text = els.masterPaste.value;
-    if (!text.trim()) { alert('Paste data first.'); return; }
-    try { const rows = parseDelimited(text); loadMasterFromRows(rows); } catch(e){ alert(e.message || String(e)); }
-  });
-
-  // Column mapping modal actions
-  els.mapConfirm.addEventListener('click', ()=>{
-    if (!state.importBuffer) return closeMapper();
-    const skuIdx = els.mapSku.value === '' ? undefined : Number(els.mapSku.value);
-    const qtyIdx = els.mapQty.value === '' ? undefined : Number(els.mapQty.value);
-    const descIdx = els.mapDesc.value === '' ? undefined : Number(els.mapDesc.value);
-    if (skuIdx === undefined || qtyIdx === undefined) { alert('Please select at least SKU and Qty columns.'); return; }
-    closeMapper();
-    loadMasterFromRows(state.importBuffer, { skuIdx, qtyIdx, descIdx });
-    state.importBuffer = null;
-  });
-  els.mapCancel.addEventListener('click', ()=>{ state.importBuffer = null; closeMapper(); });
-
-  // Initialize app
-  load(); focusScan();
-})();
-</script>
-</body>
-</html>
