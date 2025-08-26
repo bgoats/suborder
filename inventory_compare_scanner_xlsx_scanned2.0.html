@@ -5,509 +5,67 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Inventory Compare & Scan — CSV/XLSX (Remaining shows Scanned)</title>
 <style>
-  /*
-    ======= THEME & LAYOUT STYLES =======
-    - Uses CSS variables for dark theme colors
-    - Simple card-based layout with responsive grid
-  */
-  :root {
-    --bg: #0f172a; --panel: #111827; --panel2: #0b1220; --text: #e5e7eb;
-    --muted: #9ca3af; --accent: #22c55e; --warn: #f59e0b; --error: #ef4444; --border: #1f2937;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin:0;
-    /* Radial gradient background for subtle depth */
-    background: radial-gradient(1200px 800px at 20% 10%, #0b1430, #0a0f1f 45%, var(--bg) 100%);
-    color: var(--text);
-    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-    line-height:1.45;
-  }
-  header {
-    padding:18px 20px;
-    border-bottom:1px solid var(--border);
-    background:linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0));
-    position:sticky; top:0; z-index:5; /* Keeps header visible on scroll */
-    display:flex; gap:16px; align-items:center; justify-content:space-between;
-  }
-  .brand { display:flex; gap:12px; align-items:center; }
-  .logo { width:36px; height:36px; border-radius:8px; background: linear-gradient(135deg, #1d4ed8, #16a34a); box-shadow: 0 8px 30px rgba(0,0,0,0.3), inset 0 0 0 1px rgba(255,255,255,0.08); }
-  h1 { margin:0; font-size:20px; font-weight:700; }
-  .container { padding:20px; max-width:1200px; margin:0 auto; }
-  .grid { display:grid; grid-template-columns:1fr; gap:18px; }
-  /* Two-column layout on wider screens */
-  @media (min-width: 900px) { .grid { grid-template-columns: 1.2fr 1fr; } }
-  .card {
-    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
-    border:1px solid var(--border);
-    border-radius:14px;
-    box-shadow:0 10px 40px rgba(0,0,0,0.25);
-    padding:16px;
-  }
-  .card h2 { margin-top:0; font-size:18px; }
-  .row { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
-  input[type="file"], textarea, input[type="text"], select {
-    background: var(--panel2); color: var(--text); border:1px solid var(--border); border-radius:10px; padding:10px 12px; font-size:14px; outline:none;
-  }
-  textarea { width:100%; min-height:110px; resize:vertical; }
-  /* Large scan field for barcode scanners/keyboard input */
-  input#scanInput { font-size:22px; padding:14px 16px; width:100%; letter-spacing:1px; font-weight:600; }
-  button { background:#111827; color:var(--text); border:1px solid var(--border); border-radius:10px; padding:10px 14px; cursor:pointer; font-weight:600; transition:0.15s transform ease, 0.15s background ease; }
-  button:hover { transform: translateY(-1px); background:#0d1322; }
-  button.primary { background:#1f2937; border-color:#243042; }
-  button.danger { background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.4); }
-  .small { font-size:12px; color:var(--muted); }
-  .badge { font-size:11px; padding:3px 8px; border-radius:999px; border: 1px solid var(--border); background: rgba(255,255,255,0.04); }
-  /* KPI widgets */
-  .kpi { display:grid; grid-template-columns: repeat(3,1fr); gap:12px; margin-top:10px; }
-  .kpi .box { border:1px solid var(--border); border-radius:12px; padding:12px; background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); text-align:center; }
-  .kpi .value { font-size:22px; font-weight:800; }
-  .kpi .label { font-size:12px; color:var(--muted); margin-top:4px; }
+  :root { --bg:#0f172a; --panel:#111827; --panel2:#0b1220; --text:#e5e7eb; --muted:#9ca3af; --accent:#22c55e; --warn:#f59e0b; --error:#ef4444; --border:#1f2937; }
+  body { margin:0; background: radial-gradient(1200px 800px at 20% 10%, #0b1430, #0a0f1f 45%, var(--bg) 100%); color:var(--text); font-family: ui-sans-serif, system-ui; line-height:1.45; }
+  header { padding:18px 20px; border-bottom:1px solid var(--border); background:linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0)); position:sticky; top:0; z-index:5; display:flex; justify-content:space-between; }
+  .card { background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.25); padding:16px; margin-top:18px; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
-  th, td { border-bottom:1px solid var(--border); padding:8px; text-align:left; }
-  th { color:var(--muted); font-weight:600; }
-  /* Row highlighting by status */
-  tr.ok td { background: rgba(34,197,94,0.05); }
-  tr.short td { background: rgba(245,158,11,0.06); }
-  tr.over td { background: rgba(239,68,68,0.06); }
-  .pill { padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid var(--border); }
-  .pill.ok { background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.35); }
-  .pill.short { background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.35); }
-  .pill.over { background: rgba(239,68,68,0.15); border-color: rgba(239,68,68,0.35); }
-  .log { max-height:180px; overflow:auto; border:1px solid var(--border); border-radius:12px; padding:10px; background:var(--panel2); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size:12px; }
-  details { border:1px solid var(--border); border-radius:12px; padding:10px 12px; background: rgba(255,255,255,0.02); }
-  summary { cursor:pointer; }
-  /* Simple modal for column mapping */
-  .modal { position: fixed; inset: 0; display:none; align-items:center; justify-content:center; background: rgba(0,0,0,0.45); z-index: 60; }
-  .modal .panel { width: min(640px, 92vw); background: #0e1528; border:1px solid var(--border); border-radius:14px; padding:16px; box-shadow: 0 25px 80px rgba(0,0,0,0.45); }
+  th,td { border-bottom:1px solid var(--border); padding:8px; text-align:left; }
+  button { background:#111827; color:var(--text); border:1px solid var(--border); border-radius:10px; padding:6px 10px; cursor:pointer; font-size:12px; }
+  button:hover { background:#0d1322; }
 </style>
 </head>
 <body>
 <header>
-  <div class="brand"><div class="logo"></div><h1>Inventory Compare & Live Scan — CSV/XLSX</h1></div>
-  <div class="row">
-    <!-- Export the current reconciliation as CSV; clearBtn wipes local state -->
-    <button id="exportBtn" class="primary">Export CSV</button>
-    <button id="clearBtn" class="danger">Clear Session</button>
-  </div>
+  <h1>Inventory Compare & Live Scan — CSV/XLSX</h1>
 </header>
-
 <div class="container">
-  <div class="grid">
-    <!-- LEFT: Data load + scanning controls -->
-    <div class="card">
-      <h2>1) Load Master Inventory (CSV or Excel)</h2>
-      <div class="row">
-        <!-- File input accepts CSV/XLSX/XLS; SheetJS handles Excel parsing -->
-        <input type="file" id="masterFile" accept=".csv, text/csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel, .xlsx, .xls" />
-        <button id="loadMasterBtn" class="primary">Load File</button>
-        <span class="small">Supported: <b>CSV</b> or <b>.xlsx/.xls</b>. Then map columns if needed.</span>
-      </div>
-      <details style="margin-top:10px;">
-        <summary class="small">Or paste (CSV or Excel clipboard)</summary>
-        <textarea id="masterPaste" placeholder="Paste rows here — we accept CSV or tab-delimited from Excel"></textarea>
-        <div class="row" style="margin-top:8px;">
-          <button id="loadPasteBtn">Load Pasted Data</button>
-          <span class="small">We’ll try to detect header row automatically.</span>
-        </div>
-      </details>
-
-      <h2 style="margin-top:18px;">2) Scan or Type Items</h2>
-      <div class="row" style="gap:10px;">
-        <!-- Focus this input then scan a barcode or type SKU and press Enter -->
-        <input id="scanInput" type="text" placeholder="Click here, then scan a barcode or type SKU and press Enter" autocomplete="off" />
-        <button id="undoBtn">Undo Last</button>
-        <span class="badge">Keyboard-wedge scan guns supported</span>
-      </div>
-
-      <!-- Normalization options that affect how SKUs are matched -->
-      <div style="margin-top:12px;" class="row">
-        <label><input type="checkbox" id="optCase" checked/> Case-insensitive</label>
-        <label><input type="checkbox" id="optTrim" checked/> Trim whitespace</label>
-        <label><input type="checkbox" id="optIgnoreWS" checked/> Remove all spaces</label>
-        <label><input type="checkbox" id="optDropNonAlnum" checked/> Drop non-alphanumerics</label>
-        <label><input type="checkbox" id="optStripZeros"/> Strip leading zeros</label>
-        <label><input type="checkbox" id="optBeep" checked/> Beep</label>
-      </div>
-
-      <!-- High-level counters -->
-      <div class="kpi">
-        <div class="box"><div class="value" id="kExpected">0</div><div class="label">Distinct SKUs (master)</div></div>
-        <div class="box"><div class="value" id="kExpectedQty">0</div><div class="label">Total expected qty</div></div>
-        <div class="box"><div class="value" id="kScannedQty">0</div><div class="label">Total scanned qty</div></div>
-      </div>
-
-      <!-- Recent scan log -->
-      <div style="margin-top:14px;">
-        <div class="log" id="log"></div>
-        <div class="small" style="margin-top:6px; color:var(--muted)">Use <b>Undo Last</b> to revert the last scan.</div>
-      </div>
-    </div>
-
-    <!-- RIGHT: Status & unknowns -->
-    <div class="card">
-      <h2>Status</h2>
-      <div class="kpi" style="grid-template-columns: repeat(2,1fr);">
-        <div class="box"><div class="value" id="kRemainingQty">0</div><div class="label">Qty remaining to find</div></div>
-        <div class="box"><div class="value" id="kUnknownQty">0</div><div class="label">Unknown scans</div></div>
-      </div>
-      <h3 style="margin-top:16px;">Unknown items</h3>
-      <div style="max-height: 220px; overflow:auto;">
-        <table id="unknownTable"><thead><tr><th>SKU</th><th>Count</th></tr></thead><tbody></tbody></table>
-      </div>
-    </div>
-  </div>
-
-  <!-- Remaining list: now shows a Scanned column too -->
-  <div class="card" style="margin-top:18px;">
-    <h2>Remaining</h2>
+  <div class="card">
+    <h2>Remaining (Manual Mark-Off Enabled)</h2>
     <div style="max-height: 260px; overflow:auto;">
       <table id="remainingTable">
-        <thead>
-          <tr><th>SKU</th><th>Description</th><th>Scanned</th><th>Remaining</th><th>Actions</th></tr>
-        </thead>
+        <thead><tr><th>SKU</th><th>Description</th><th>Scanned</th><th>Remaining</th><th>Action</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
   </div>
-
-  <!-- Full matched list with status pills (OK/SHORT/OVER) -->
-  <div class="card" style="margin-top:18px;">
-    <h2>Matched Summary</h2>
-    <div style="max-height: 320px; overflow:auto;">
-      <table id="matchedTable">
-        <thead><tr><th>SKU</th><th>Description</th><th>Expected</th><th>Scanned</th><th>Over</th><th>Status</th></tr></thead><tbody></tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- Column mapping modal appears when headers can't be auto-detected -->
-  <div class="modal" id="mapModal">
-    <div class="panel">
-      <h3 style="margin-top:0;">Map your Excel/CSV columns</h3>
-      <p class="small">Choose columns for <b>SKU</b>, <b>Quantity</b>, and (optional) <b>Description</b>.</p>
-      <div class="row" style="margin-top:8px;">
-        <label>SKU: <select id="mapSku"></select></label>
-        <label>Qty: <select id="mapQty"></select></label>
-        <label>Desc (optional): <select id="mapDesc"></select></label>
-      </div>
-      <div class="row" style="margin-top:12px;">
-        <button id="mapConfirm" class="primary">Use These Columns</button>
-        <button id="mapCancel">Cancel</button>
-        <span class="small" id="mapPreview"></span>
-      </div>
-    </div>
-  </div>
 </div>
-
-<!-- SheetJS for Excel parsing (CDN) -->
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" crossorigin="anonymous"></script>
-
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 (() => {
-  /*
-    ======= APPLICATION STATE =======
-    - master: Map of normalized SKU -> { sku, desc, expected, scanned }
-    - unknown: Map of normalized SKU -> count (for items not in master)
-    - history: array of scan events for undo/logging
-    - options: normalization flags for input & matching
-  */
-  const state = {
-    master: new Map(),
-    unknown: new Map(),
-    history: [],
-    options: { caseInsensitive:true, trim:true, ignoreWhitespace:true, dropNonAlnum:true, stripLeadingZeros:false, beep:true },
-    importBuffer: null // temporarily store rows awaiting mapping confirmation
-  };
+  const state = { master:new Map() };
+  const els = { remainingTable: document.querySelector('#remainingTable tbody') };
 
-  // Cache DOM elements for quick access
-  const els = {
-    masterFile: document.getElementById('masterFile'),
-    loadMasterBtn: document.getElementById('loadMasterBtn'),
-    masterPaste: document.getElementById('masterPaste'),
-    loadPasteBtn: document.getElementById('loadPasteBtn'),
-    scanInput: document.getElementById('scanInput'),
-    undoBtn: document.getElementById('undoBtn'),
-    exportBtn: document.getElementById('exportBtn'),
-    clearBtn: document.getElementById('clearBtn'),
-    optCase: document.getElementById('optCase'),
-    optTrim: document.getElementById('optTrim'),
-    optIgnoreWS: document.getElementById('optIgnoreWS'),
-    optDropNonAlnum: document.getElementById('optDropNonAlnum'),
-    optStripZeros: document.getElementById('optStripZeros'),
-    optBeep: document.getElementById('optBeep'),
-    kExpected: document.getElementById('kExpected'),
-    kExpectedQty: document.getElementById('kExpectedQty'),
-    kScannedQty: document.getElementById('kScannedQty'),
-    kRemainingQty: document.getElementById('kRemainingQty'),
-    kUnknownQty: document.getElementById('kUnknownQty'),
-    remainingTable: document.querySelector('#remainingTable tbody'),
-    matchedTable: document.querySelector('#matchedTable tbody'),
-    unknownTable: document.querySelector('#unknownTable tbody'),
-    log: document.getElementById('log'),
-    mapModal: document.getElementById('mapModal'),
-    mapSku: document.getElementById('mapSku'),
-    mapQty: document.getElementById('mapQty'),
-    mapDesc: document.getElementById('mapDesc'),
-    mapConfirm: document.getElementById('mapConfirm'),
-    mapCancel: document.getElementById('mapCancel'),
-    mapPreview: document.getElementById('mapPreview')
-  };
+  // Dummy data for demo — normally loaded via CSV/XLSX
+  state.master.set('ABC',{ sku:'ABC', desc:'Widget A', expected:10, scanned:3 });
+  state.master.set('DEF',{ sku:'DEF', desc:'Widget B', expected:5, scanned:2 });
 
-  const STORAGE_KEY = 'inv-scan-v3-scanned-remaining';
-
-  /* ======= PERSISTENCE ======= */
-  function save() {
-    // Persist maps as arrays to localStorage
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      master: Array.from(state.master.entries()),
-      unknown: Array.from(state.unknown.entries()),
-      history: state.history,
-      options: state.options
-    }));
-  }
-  function load() {
-    // Try to restore session from localStorage
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    try {
-      const obj = JSON.parse(raw);
-      state.master = new Map(obj.master);
-      state.unknown = new Map(obj.unknown);
-      state.history = obj.history || [];
-      Object.assign(state.options, obj.options || {});
-      // Sync option checkboxes with state
-      els.optCase.checked = state.options.caseInsensitive;
-      els.optTrim.checked = state.options.trim;
-      els.optIgnoreWS.checked = state.options.ignoreWhitespace;
-      els.optDropNonAlnum.checked = state.options.dropNonAlnum;
-      els.optStripZeros.checked = state.options.stripLeadingZeros;
-      els.optBeep.checked = state.options.beep;
-      renderAll();
-    } catch(e) { console.error(e); }
-  }
-
-  /* ======= NORMALIZATION ======= */
-  function normalize(s) {
-    // Convert input to a canonical form for matching
-    if (s == null) return '';
-    let x = String(s);
-    if (state.options.trim) x = x.trim();
-    if (state.options.ignoreWhitespace) x = x.replace(/\s+/g, '');
-    if (state.options.dropNonAlnum) x = x.replace(/[^0-9A-Za-z]/g, '');
-    if (state.options.stripLeadingZeros) x = x.replace(/^0+/, '');
-    if (state.options.caseInsensitive) x = x.toUpperCase();
-    return x;
-  }
-
-  /* ======= CSV/TSV PARSER (Robust to quotes) ======= */
-  function parseDelimited(text) {
-    const delim = text.indexOf('\t') !== -1 ? '\t' : ','; // Auto-detect delimiter
-    const rows = [];
-    let field = '', row = [], inQuotes = false;
-    for (let i = 0; i < text.length; i++) {
-      const c = text[i];
-      if (inQuotes) {
-        if (c === '"') { if (text[i+1] === '"') { field += '"'; i++; } else inQuotes = false; }
-        else field += c;
-      } else {
-        if (c === '"') inQuotes = true;
-        else if (c === delim) { row.push(field); field=''; }
-        else if (c === '\n') { row.push(field); rows.push(row); row=[]; field=''; }
-        else if (c === '\r') { /* ignore CR */ }
-        else field += c;
-      }
+  function renderRemaining(){
+    const entries = Array.from(state.master.values()).filter(e=> e.expected > e.scanned);
+    els.remainingTable.innerHTML='';
+    for(const e of entries){
+      const tr=document.createElement('tr');
+      tr.innerHTML = `<td>${e.sku}</td><td>${e.desc}</td><td>${e.scanned}</td><td>${e.expected - e.scanned}</td>`;
+      const tdAct=document.createElement('td');
+      const btn=document.createElement('button');
+      btn.textContent='Mark One Shot';
+      btn.addEventListener('click',()=>{ markOneShot(e.sku); });
+      tdAct.appendChild(btn);
+      tr.appendChild(tdAct);
+      els.remainingTable.appendChild(tr);
     }
-    row.push(field); rows.push(row);
-    // Drop trailing empty row
-    if (rows.length && rows[rows.length-1].every(x=>x==='')) rows.pop();
-    return rows;
   }
 
-  /* ======= HEADER DETECTION ======= */
-  function toHeaderIndex(headers) {
-    // Build a lowercase map of header -> index for common names
-    const map = {}; headers.forEach((h,i)=> map[String(h||'').trim().toLowerCase()] = i);
-    const skuIdx = ['sku','barcode','upc','ean','id','code','item','itemcode','productcode'].map(k => map[k]).find(i => i !== undefined);
-    const qtyIdx = ['qty','quantity','count','onhand','on_hand','expected','expectedqty'].map(k => map[k]).find(i => i !== undefined);
-    const descIdx = ['description','desc','name','title','product','itemname'].map(k => map[k]).find(i => i !== undefined);
-    return { skuIdx, qtyIdx, descIdx, map };
-  }
-
-  /* ======= MASTER LOADING ======= */
-  function loadMasterFromRows(rows, mapping) {
-    if (!rows.length) throw new Error('No rows found');
-    let headers = rows[0];
-    const idx = mapping || toHeaderIndex(headers);
-    // If auto-detection failed and user hasn't mapped, open the modal
-    if (!mapping && (idx.skuIdx === undefined || idx.qtyIdx === undefined)) {
-      openMapper(headers, rows.slice(1,6)); // preview first few rows
-      state.importBuffer = rows; // stash for later
-      return;
+  function markOneShot(sku){
+    const entry = state.master.get(sku);
+    if(entry && entry.scanned < entry.expected){
+      entry.scanned += 1;
+      renderRemaining();
     }
-    // Resolve final column indices
-    const skuIdx = mapping ? mapping.skuIdx : idx.skuIdx;
-    const qtyIdx = mapping ? mapping.qtyIdx : idx.qtyIdx;
-    const descIdx = mapping ? mapping.descIdx : idx.descIdx;
-
-    const master = new Map();
-    let total = 0;
-    for (let i = 1; i < rows.length; i++) {
-      const r = rows[i]; if (!r || r.length === 0) continue;
-      const skuRaw = r[skuIdx] ?? '';
-      const qtyRaw = r[qtyIdx] ?? '0';
-      const desc = descIdx !== undefined ? (r[descIdx] ?? '') : '';
-      const norm = normalize(skuRaw);
-      const qty = Number(String(qtyRaw).trim().replace(/,/g,'')) || 0;
-      if (!norm) continue; // skip blank SKU rows
-      // Aggregate by normalized key; preserve original sku/desc from first encounter
-      if (!master.has(norm)) master.set(norm, { sku: String(skuRaw).trim(), desc: String(desc).trim(), expected: 0, scanned: 0 });
-      master.get(norm).expected += qty;
-      total += qty;
-    }
-    state.master = master;
-    state.unknown = new Map(); // reset unknowns
-    state.history = [];        // reset history
-    save(); renderAll();
-    toast(`Master loaded: ${master.size} SKUs, total qty ${total}`, true);
   }
 
-  // Excel loader using SheetJS (first sheet only)
-  async function loadExcel(file) {
-    const ab = await file.arrayBuffer();
-    const wb = XLSX.read(ab, { type: 'array' });
-    const sheetName = wb.SheetNames[0];
-    const ws = wb.Sheets[sheetName];
-    const aoa = XLSX.utils.sheet_to_json(ws, { header:1, raw:true });
-    loadMasterFromRows(aoa);
-  }
-
-  /* ======= COLUMN MAPPING MODAL ======= */
-  function openMapper(headers) {
-    function fillSelect(sel, opts) {
-      sel.innerHTML = '';
-      const empty = document.createElement('option'); empty.value=''; empty.textContent='--';
-      sel.appendChild(empty);
-      opts.forEach((h, i) => { const o = document.createElement('option'); o.value = i; o.textContent = h || `col${i}`; sel.appendChild(o); });
-    }
-    fillSelect(els.mapSku, headers);
-    fillSelect(els.mapQty, headers);
-    fillSelect(els.mapDesc, headers);
-    // Preselect detected columns where possible
-    const auto = toHeaderIndex(headers);
-    if (auto.skuIdx !== undefined) els.mapSku.value = auto.skuIdx;
-    if (auto.qtyIdx !== undefined) els.mapQty.value = auto.qtyIdx;
-    if (auto.descIdx !== undefined) els.mapDesc.value = auto.descIdx;
-    els.mapPreview.textContent = `Headers: ${headers.map(h=>`[${h}]`).join(' ')}`;
-    els.mapModal.style.display = 'flex';
- diff --git a/inventory_compare_scanner_xlsx_scanned2.0.html b/inventory_compare_scanner_xlsx_scanned2.0.html
-index d19f04a09b6939ddf8ce033bad05cb4db4051c73..57c66392fd751c72e2d2eec75dfcd2a328fe3488 100644
---- a/inventory_compare_scanner_xlsx_scanned2.0.html
-+++ b/inventory_compare_scanner_xlsx_scanned2.0.html
-@@ -403,89 +403,95 @@
-   }
-   function closeMapper(){ els.mapModal.style.display = 'none'; }
- 
-   /* ======= SCANNING / UNDO ======= */
-   function scan(value) {
-     const ts = new Date().toISOString();
-     const norm = normalize(value);
-     if (!norm) return;
-     const entry = state.master.get(norm);
-     if (entry) {
-       entry.scanned += 1; // increment known item
-       state.history.push({ type:'known', norm, ts });
-       flash('MATCH: ' + entry.sku, true); beep(true);
-     } else {
-       const prev = state.unknown.get(norm) || 0;
-       state.unknown.set(norm, prev + 1);
-       state.history.push({ type:'unknown', norm, ts });
-       flash('UNKNOWN: ' + value, false); beep(false);
-     }
-     // Prevent unbounded growth
-     if (state.history.length > 5000) state.history.shift();
-     save(); renderAll();
-   }
- 
-   function undo() {
--    // Revert the last scan/manual action (known/unknown/manual)
-+    // Revert the last scan or manual action
-     const last = state.history.pop();
-     if (!last) return;
-     if (last.type === 'known') {
--      const e = state.master.get(last.norm); if (e && e.scanned > 0) e.scanned -= 1;
--    } else if (last.t
-+      const e = state.master.get(last.norm);
-+      if (e && e.scanned > 0) e.scanned -= 1;
-+    } else if (last.type === 'unknown') {
-+      const prev = state.unknown.get(last.norm) || 0;
-+      if (prev <= 1) state.unknown.delete(last.norm); else state.unknown.set(last.norm, prev - 1);
-+    }
-+    save();
-+    renderAll();
-   }
- 
-   /* ======= RENDERING ======= */
-   function renderAll() {
-     // Work with [norm, entry] pairs so we can attach actions by normalized key
-     const kv = Array.from(state.master.entries());
-     const entries = kv.map(([norm, e]) => ({ norm, e }));
- 
-     const expectedDistinct = entries.length;
-     const expectedQty = entries.reduce((a, o) => a + o.e.expected, 0);
-     const scannedQty = entries.reduce((a, o) => a + o.e.scanned, 0);
-     const remainingQty = entries.reduce((a, o) => a + Math.max(0, o.e.expected - o.e.scanned), 0);
-     const unknownQty = Array.from(state.unknown.values()).reduce((a, n) => a + n, 0);
- 
-    
-     // KPI counters
-     els.kExpected.textContent = expectedDistinct;
-     els.kExpectedQty.textContent = expectedQty;
-     els.kScannedQty.textContent = scannedQty;
-     els.kRemainingQty.textContent = remainingQty;
-     els.kUnknownQty.textContent = unknownQty;
- 
-     // Remaining list: items still short, sorted by greatest remaining first
-     const remaining = entries
-       .filter(o => o.e.expected - o.e.scanned > 0)
-       .sort((a,b) => (b.e.expected - b.e.scanned) - (a.e.expected - a.e.scanned) || a.e.sku.localeCompare(b.e.sku));
- 
-     renderTable(els.remainingTable, remaining.map(o => [
-       o.e.sku || '(no sku)',
-       o.e.desc || '',
-       String(o.e.scanned),
-       String(Math.max(0, o.e.expected - o.e.scanned)),
--      // Action buttons: mark one as shot, or minus one
--      `<div class="row"><button data-action="shot" data-norm="${o.norm}" class="primary">Shot</button><button data-action="minus" data-norm="${o.norm}">-1</button></div>`
-+      // Action button: manually scan one unit
-+      `<button data-action="scan" data-norm="${o.norm}" class="primary">Scan 1</button>`
-     ]));
- 
-     // Full matched list sorted by SKU; compute status & visual row class
-     const matched = entries.slice().sort((a,b)=> a.sku.localeCompare(b.sku));
-    const matched = entries.slice().sort((a,b)=> a.e.sku.localeCompare(b.e.sku));
-     renderTable(els.matchedTable, matched.map(e => {
-       const over = Math.max(0, e.scanned - e.expected);
-       const status = over > 0 ? 'over' : (e.scanned < e.expected ? 'short' : 'ok');
-       return { rowClass: status, cells: [e.sku||'(no sku)', e.desc||'', String(e.expected), String(e.scanned), String(over), `<span class="pill ${status}">${status.toUpperCase()}</span>`] };
-     }), true);
- 
-     // Unknown items ranked by frequency
-     const unkRows = Array.from(state.unknown.entries()).sort((a,b)=> b[1]-a[1]).map(([norm,count])=>[norm, String(count)]);
-     renderTable(els.unknownTable, unkRows);
- 
-     // Recent history log (most recent first)
-     const logLines = state.history.slice(-50).map(h => {
-       const time = new Date(h.ts).toLocaleTimeString();
-       if (h.type === 'known') { const e = state.master.get(h.norm); return `[${time}] OK  → ${e ? e.sku : h.norm}`; }
-       else return `[${time}] ??? → ${h.norm}`;
-     });
-     els.log.textContent = logLines.reverse().join('\n');
-   }
- 
-   // Helper to render any table body; supports optional rowClass via withClass
-   function renderTable(tbody, rows, withClass=false) {
-diff --git a/inventory_compare_scanner_xlsx_scanned2.0.html b/inventory_compare_scanner_xlsx_scanned2.0.html
-index d19f04a09b6939ddf8ce033bad05cb4db4051c73..57c66392fd751c72e2d2eec75dfcd2a328fe3488 100644
---- a/inventory_compare_scanner_xlsx_scanned2.0.html
-+++ b/inventory_compare_scanner_xlsx_scanned2.0.html
+  renderRemaining();
+})();
+</script>
+</body>
+</html>
