@@ -5,29 +5,52 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Inventory Compare & Scan — CSV/XLSX (Remaining shows Scanned)</title>
 <style>
+  /*
+    ======= THEME & LAYOUT STYLES =======
+    - Uses CSS variables for dark theme colors
+    - Simple card-based layout with responsive grid
+  */
   :root {
     --bg: #0f172a; --panel: #111827; --panel2: #0b1220; --text: #e5e7eb;
     --muted: #9ca3af; --accent: #22c55e; --warn: #f59e0b; --error: #ef4444; --border: #1f2937;
   }
   * { box-sizing: border-box; }
-  body { margin:0; background: radial-gradient(1200px 800px at 20% 10%, #0b1430, #0a0f1f 45%, var(--bg) 100%);
-         color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; line-height:1.45; }
-  header { padding:18px 20px; border-bottom:1px solid var(--border); background:linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0));
-           position:sticky; top:0; z-index:5; display:flex; gap:16px; align-items:center; justify-content:space-between; }
+  body {
+    margin:0;
+    /* Radial gradient background for subtle depth */
+    background: radial-gradient(1200px 800px at 20% 10%, #0b1430, #0a0f1f 45%, var(--bg) 100%);
+    color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+    line-height:1.45;
+  }
+  header {
+    padding:18px 20px;
+    border-bottom:1px solid var(--border);
+    background:linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0));
+    position:sticky; top:0; z-index:5; /* Keeps header visible on scroll */
+    display:flex; gap:16px; align-items:center; justify-content:space-between;
+  }
   .brand { display:flex; gap:12px; align-items:center; }
   .logo { width:36px; height:36px; border-radius:8px; background: linear-gradient(135deg, #1d4ed8, #16a34a); box-shadow: 0 8px 30px rgba(0,0,0,0.3), inset 0 0 0 1px rgba(255,255,255,0.08); }
   h1 { margin:0; font-size:20px; font-weight:700; }
   .container { padding:20px; max-width:1200px; margin:0 auto; }
   .grid { display:grid; grid-template-columns:1fr; gap:18px; }
+  /* Two-column layout on wider screens */
   @media (min-width: 900px) { .grid { grid-template-columns: 1.2fr 1fr; } }
-  .card { background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
-          border:1px solid var(--border); border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.25); padding:16px; }
+  .card {
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+    border:1px solid var(--border);
+    border-radius:14px;
+    box-shadow:0 10px 40px rgba(0,0,0,0.25);
+    padding:16px;
+  }
   .card h2 { margin-top:0; font-size:18px; }
   .row { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
   input[type="file"], textarea, input[type="text"], select {
     background: var(--panel2); color: var(--text); border:1px solid var(--border); border-radius:10px; padding:10px 12px; font-size:14px; outline:none;
   }
   textarea { width:100%; min-height:110px; resize:vertical; }
+  /* Large scan field for barcode scanners/keyboard input */
   input#scanInput { font-size:22px; padding:14px 16px; width:100%; letter-spacing:1px; font-weight:600; }
   button { background:#111827; color:var(--text); border:1px solid var(--border); border-radius:10px; padding:10px 14px; cursor:pointer; font-weight:600; transition:0.15s transform ease, 0.15s background ease; }
   button:hover { transform: translateY(-1px); background:#0d1322; }
@@ -35,6 +58,7 @@
   button.danger { background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.4); }
   .small { font-size:12px; color:var(--muted); }
   .badge { font-size:11px; padding:3px 8px; border-radius:999px; border: 1px solid var(--border); background: rgba(255,255,255,0.04); }
+  /* KPI widgets */
   .kpi { display:grid; grid-template-columns: repeat(3,1fr); gap:12px; margin-top:10px; }
   .kpi .box { border:1px solid var(--border); border-radius:12px; padding:12px; background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); text-align:center; }
   .kpi .value { font-size:22px; font-weight:800; }
@@ -42,6 +66,7 @@
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th, td { border-bottom:1px solid var(--border); padding:8px; text-align:left; }
   th { color:var(--muted); font-weight:600; }
+  /* Row highlighting by status */
   tr.ok td { background: rgba(34,197,94,0.05); }
   tr.short td { background: rgba(245,158,11,0.06); }
   tr.over td { background: rgba(239,68,68,0.06); }
@@ -52,20 +77,16 @@
   .log { max-height:180px; overflow:auto; border:1px solid var(--border); border-radius:12px; padding:10px; background:var(--panel2); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size:12px; }
   details { border:1px solid var(--border); border-radius:12px; padding:10px 12px; background: rgba(255,255,255,0.02); }
   summary { cursor:pointer; }
-  .modal {
-    position: fixed; inset: 0; display:none; align-items:center; justify-content:center;
-    background: rgba(0,0,0,0.45); z-index: 60;
-  }
-  .modal .panel {
-    width: min(640px, 92vw); background: #0e1528; border:1px solid var(--border); border-radius:14px; padding:16px;
-    box-shadow: 0 25px 80px rgba(0,0,0,0.45);
-  }
+  /* Simple modal for column mapping */
+  .modal { position: fixed; inset: 0; display:none; align-items:center; justify-content:center; background: rgba(0,0,0,0.45); z-index: 60; }
+  .modal .panel { width: min(640px, 92vw); background: #0e1528; border:1px solid var(--border); border-radius:14px; padding:16px; box-shadow: 0 25px 80px rgba(0,0,0,0.45); }
 </style>
 </head>
 <body>
 <header>
   <div class="brand"><div class="logo"></div><h1>Inventory Compare & Live Scan — CSV/XLSX</h1></div>
   <div class="row">
+    <!-- Export the current reconciliation as CSV; clearBtn wipes local state -->
     <button id="exportBtn" class="primary">Export CSV</button>
     <button id="clearBtn" class="danger">Clear Session</button>
   </div>
@@ -73,9 +94,11 @@
 
 <div class="container">
   <div class="grid">
+    <!-- LEFT: Data load + scanning controls -->
     <div class="card">
       <h2>1) Load Master Inventory (CSV or Excel)</h2>
       <div class="row">
+        <!-- File input accepts CSV/XLSX/XLS; SheetJS handles Excel parsing -->
         <input type="file" id="masterFile" accept=".csv, text/csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel, .xlsx, .xls" />
         <button id="loadMasterBtn" class="primary">Load File</button>
         <span class="small">Supported: <b>CSV</b> or <b>.xlsx/.xls</b>. Then map columns if needed.</span>
@@ -91,11 +114,13 @@
 
       <h2 style="margin-top:18px;">2) Scan or Type Items</h2>
       <div class="row" style="gap:10px;">
+        <!-- Focus this input then scan a barcode or type SKU and press Enter -->
         <input id="scanInput" type="text" placeholder="Click here, then scan a barcode or type SKU and press Enter" autocomplete="off" />
         <button id="undoBtn">Undo Last</button>
         <span class="badge">Keyboard-wedge scan guns supported</span>
       </div>
 
+      <!-- Normalization options that affect how SKUs are matched -->
       <div style="margin-top:12px;" class="row">
         <label><input type="checkbox" id="optCase" checked/> Case-insensitive</label>
         <label><input type="checkbox" id="optTrim" checked/> Trim whitespace</label>
@@ -105,18 +130,21 @@
         <label><input type="checkbox" id="optBeep" checked/> Beep</label>
       </div>
 
+      <!-- High-level counters -->
       <div class="kpi">
         <div class="box"><div class="value" id="kExpected">0</div><div class="label">Distinct SKUs (master)</div></div>
         <div class="box"><div class="value" id="kExpectedQty">0</div><div class="label">Total expected qty</div></div>
         <div class="box"><div class="value" id="kScannedQty">0</div><div class="label">Total scanned qty</div></div>
       </div>
 
+      <!-- Recent scan log -->
       <div style="margin-top:14px;">
         <div class="log" id="log"></div>
         <div class="small" style="margin-top:6px; color:var(--muted)">Use <b>Undo Last</b> to revert the last scan.</div>
       </div>
     </div>
 
+    <!-- RIGHT: Status & unknowns -->
     <div class="card">
       <h2>Status</h2>
       <div class="kpi" style="grid-template-columns: repeat(2,1fr);">
@@ -130,6 +158,7 @@
     </div>
   </div>
 
+  <!-- Remaining list: now shows a Scanned column too -->
   <div class="card" style="margin-top:18px;">
     <h2>Remaining</h2>
     <div style="max-height: 260px; overflow:auto;">
@@ -142,6 +171,7 @@
     </div>
   </div>
 
+  <!-- Full matched list with status pills (OK/SHORT/OVER) -->
   <div class="card" style="margin-top:18px;">
     <h2>Matched Summary</h2>
     <div style="max-height: 320px; overflow:auto;">
@@ -151,6 +181,7 @@
     </div>
   </div>
 
+  <!-- Column mapping modal appears when headers can't be auto-detected -->
   <div class="modal" id="mapModal">
     <div class="panel">
       <h3 style="margin-top:0;">Map your Excel/CSV columns</h3>
@@ -174,14 +205,22 @@
 
 <script>
 (() => {
+  /*
+    ======= APPLICATION STATE =======
+    - master: Map of normalized SKU -> { sku, desc, expected, scanned }
+    - unknown: Map of normalized SKU -> count (for items not in master)
+    - history: array of scan events for undo/logging
+    - options: normalization flags for input & matching
+  */
   const state = {
     master: new Map(),
     unknown: new Map(),
     history: [],
     options: { caseInsensitive:true, trim:true, ignoreWhitespace:true, dropNonAlnum:true, stripLeadingZeros:false, beep:true },
-    importBuffer: null
+    importBuffer: null // temporarily store rows awaiting mapping confirmation
   };
 
+  // Cache DOM elements for quick access
   const els = {
     masterFile: document.getElementById('masterFile'),
     loadMasterBtn: document.getElementById('loadMasterBtn'),
@@ -217,7 +256,9 @@
 
   const STORAGE_KEY = 'inv-scan-v3-scanned-remaining';
 
+  /* ======= PERSISTENCE ======= */
   function save() {
+    // Persist maps as arrays to localStorage
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       master: Array.from(state.master.entries()),
       unknown: Array.from(state.unknown.entries()),
@@ -226,6 +267,7 @@
     }));
   }
   function load() {
+    // Try to restore session from localStorage
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
     try {
@@ -234,6 +276,7 @@
       state.unknown = new Map(obj.unknown);
       state.history = obj.history || [];
       Object.assign(state.options, obj.options || {});
+      // Sync option checkboxes with state
       els.optCase.checked = state.options.caseInsensitive;
       els.optTrim.checked = state.options.trim;
       els.optIgnoreWS.checked = state.options.ignoreWhitespace;
@@ -244,7 +287,9 @@
     } catch(e) { console.error(e); }
   }
 
+  /* ======= NORMALIZATION ======= */
   function normalize(s) {
+    // Convert input to a canonical form for matching
     if (s == null) return '';
     let x = String(s);
     if (state.options.trim) x = x.trim();
@@ -255,8 +300,9 @@
     return x;
   }
 
+  /* ======= CSV/TSV PARSER (Robust to quotes) ======= */
   function parseDelimited(text) {
-    const delim = text.indexOf('\t') !== -1 ? '\t' : ',';
+    const delim = text.indexOf('\t') !== -1 ? '\t' : ','; // Auto-detect delimiter
     const rows = [];
     let field = '', row = [], inQuotes = false;
     for (let i = 0; i < text.length; i++) {
@@ -268,16 +314,19 @@
         if (c === '"') inQuotes = true;
         else if (c === delim) { row.push(field); field=''; }
         else if (c === '\n') { row.push(field); rows.push(row); row=[]; field=''; }
-        else if (c === '\r') { /* skip */ }
+        else if (c === '\r') { /* ignore CR */ }
         else field += c;
       }
     }
     row.push(field); rows.push(row);
+    // Drop trailing empty row
     if (rows.length && rows[rows.length-1].every(x=>x==='')) rows.pop();
     return rows;
   }
 
+  /* ======= HEADER DETECTION ======= */
   function toHeaderIndex(headers) {
+    // Build a lowercase map of header -> index for common names
     const map = {}; headers.forEach((h,i)=> map[String(h||'').trim().toLowerCase()] = i);
     const skuIdx = ['sku','barcode','upc','ean','id','code','item','itemcode','productcode'].map(k => map[k]).find(i => i !== undefined);
     const qtyIdx = ['qty','quantity','count','onhand','on_hand','expected','expectedqty'].map(k => map[k]).find(i => i !== undefined);
@@ -285,15 +334,18 @@
     return { skuIdx, qtyIdx, descIdx, map };
   }
 
+  /* ======= MASTER LOADING ======= */
   function loadMasterFromRows(rows, mapping) {
     if (!rows.length) throw new Error('No rows found');
     let headers = rows[0];
     const idx = mapping || toHeaderIndex(headers);
+    // If auto-detection failed and user hasn't mapped, open the modal
     if (!mapping && (idx.skuIdx === undefined || idx.qtyIdx === undefined)) {
-      openMapper(headers, rows.slice(1,6));
-      state.importBuffer = rows;
+      openMapper(headers, rows.slice(1,6)); // preview first few rows
+      state.importBuffer = rows; // stash for later
       return;
     }
+    // Resolve final column indices
     const skuIdx = mapping ? mapping.skuIdx : idx.skuIdx;
     const qtyIdx = mapping ? mapping.qtyIdx : idx.qtyIdx;
     const descIdx = mapping ? mapping.descIdx : idx.descIdx;
@@ -307,18 +359,20 @@
       const desc = descIdx !== undefined ? (r[descIdx] ?? '') : '';
       const norm = normalize(skuRaw);
       const qty = Number(String(qtyRaw).trim().replace(/,/g,'')) || 0;
-      if (!norm) continue;
+      if (!norm) continue; // skip blank SKU rows
+      // Aggregate by normalized key; preserve original sku/desc from first encounter
       if (!master.has(norm)) master.set(norm, { sku: String(skuRaw).trim(), desc: String(desc).trim(), expected: 0, scanned: 0 });
       master.get(norm).expected += qty;
       total += qty;
     }
     state.master = master;
-    state.unknown = new Map();
-    state.history = [];
+    state.unknown = new Map(); // reset unknowns
+    state.history = [];        // reset history
     save(); renderAll();
     toast(`Master loaded: ${master.size} SKUs, total qty ${total}`, true);
   }
 
+  // Excel loader using SheetJS (first sheet only)
   async function loadExcel(file) {
     const ab = await file.arrayBuffer();
     const wb = XLSX.read(ab, { type: 'array' });
@@ -328,6 +382,7 @@
     loadMasterFromRows(aoa);
   }
 
+  /* ======= COLUMN MAPPING MODAL ======= */
   function openMapper(headers) {
     function fillSelect(sel, opts) {
       sel.innerHTML = '';
@@ -338,6 +393,7 @@
     fillSelect(els.mapSku, headers);
     fillSelect(els.mapQty, headers);
     fillSelect(els.mapDesc, headers);
+    // Preselect detected columns where possible
     const auto = toHeaderIndex(headers);
     if (auto.skuIdx !== undefined) els.mapSku.value = auto.skuIdx;
     if (auto.qtyIdx !== undefined) els.mapQty.value = auto.qtyIdx;
@@ -347,13 +403,14 @@
   }
   function closeMapper(){ els.mapModal.style.display = 'none'; }
 
+  /* ======= SCANNING / UNDO ======= */
   function scan(value) {
     const ts = new Date().toISOString();
     const norm = normalize(value);
     if (!norm) return;
     const entry = state.master.get(norm);
     if (entry) {
-      entry.scanned += 1;
+      entry.scanned += 1; // increment known item
       state.history.push({ type:'known', norm, ts });
       flash('MATCH: ' + entry.sku, true); beep(true);
     } else {
@@ -362,18 +419,24 @@
       state.history.push({ type:'unknown', norm, ts });
       flash('UNKNOWN: ' + value, false); beep(false);
     }
+    // Prevent unbounded growth
     if (state.history.length > 5000) state.history.shift();
     save(); renderAll();
   }
 
   function undo() {
+    // Revert the last scan action (known or unknown)
     const last = state.history.pop();
     if (!last) return;
-    if (last.type === 'known') { const e = state.master.get(last.norm); if (e && e.scanned > 0) e.scanned -= 1; }
-    else { const c = state.unknown.get(last.norm) || 0; if (c <= 1) state.unknown.delete(last.norm); else state.unknown.set(last.norm, c - 1); }
+    if (last.type === 'known') {
+      const e = state.master.get(last.norm); if (e && e.scanned > 0) e.scanned -= 1;
+    } else {
+      const c = state.unknown.get(last.norm) || 0; if (c <= 1) state.unknown.delete(last.norm); else state.unknown.set(last.norm, c - 1);
+    }
     save(); renderAll(); toast('Undid last scan', true);
   }
 
+  /* ======= RENDERING ======= */
   function renderAll() {
     const entries = Array.from(state.master.values());
     const expectedDistinct = entries.length;
@@ -381,16 +444,19 @@
     const scannedQty = entries.reduce((a, e) => a + e.scanned, 0);
     const remainingQty = entries.reduce((a, e) => a + Math.max(0, e.expected - e.scanned), 0);
     const unknownQty = Array.from(state.unknown.values()).reduce((a, n) => a + n, 0);
+
+    // KPI counters
     els.kExpected.textContent = expectedDistinct;
     els.kExpectedQty.textContent = expectedQty;
     els.kScannedQty.textContent = scannedQty;
     els.kRemainingQty.textContent = remainingQty;
     els.kUnknownQty.textContent = unknownQty;
 
+    // Remaining list: items still short, sorted by greatest remaining first
     const remaining = entries
       .filter(e => e.expected - e.scanned > 0)
       .sort((a,b) => (b.expected - b.scanned) - (a.expected - a.scanned) || a.sku.localeCompare(b.sku));
-    // NEW: include Scanned column
+
     renderTable(els.remainingTable, remaining.map(e => [
       e.sku || '(no sku)',
       e.desc || '',
@@ -398,6 +464,7 @@
       String(Math.max(0, e.expected - e.scanned))
     ]));
 
+    // Full matched list sorted by SKU; compute status & visual row class
     const matched = entries.slice().sort((a,b)=> a.sku.localeCompare(b.sku));
     renderTable(els.matchedTable, matched.map(e => {
       const over = Math.max(0, e.scanned - e.expected);
@@ -405,9 +472,11 @@
       return { rowClass: status, cells: [e.sku||'(no sku)', e.desc||'', String(e.expected), String(e.scanned), String(over), `<span class="pill ${status}">${status.toUpperCase()}</span>`] };
     }), true);
 
+    // Unknown items ranked by frequency
     const unkRows = Array.from(state.unknown.entries()).sort((a,b)=> b[1]-a[1]).map(([norm,count])=>[norm, String(count)]);
     renderTable(els.unknownTable, unkRows);
 
+    // Recent history log (most recent first)
     const logLines = state.history.slice(-50).map(h => {
       const time = new Date(h.ts).toLocaleTimeString();
       if (h.type === 'known') { const e = state.master.get(h.norm); return `[${time}] OK  → ${e ? e.sku : h.norm}`; }
@@ -416,6 +485,7 @@
     els.log.textContent = logLines.reverse().join('\n');
   }
 
+  // Helper to render any table body; supports optional rowClass via withClass
   function renderTable(tbody, rows, withClass=false) {
     tbody.innerHTML = '';
     for (const r of rows) {
@@ -431,6 +501,7 @@
     }
   }
 
+  /* ======= FEEDBACK (BEEP/FLASH/TOAST) ======= */
   let audioCtx = null;
   function ensureAudio(){ if (!audioCtx){ try{ audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }catch{} } }
   function beep(ok){ if(!state.options.beep) return; ensureAudio(); if(!audioCtx) return;
@@ -445,6 +516,7 @@
     overlay.appendChild(bubble); document.body.appendChild(overlay); setTimeout(()=>overlay.remove(), 600); }
   function toast(msg, ok){ flash(msg, ok); }
 
+  /* ======= OPTIONS HANDLING ======= */
   function setOptionsFromUI() {
     state.options.caseInsensitive = els.optCase.checked;
     state.options.trim = els.optTrim.checked;
@@ -457,25 +529,30 @@
   [els.optCase, els.optTrim, els.optIgnoreWS, els.optDropNonAlnum, els.optStripZeros, els.optBeep]
     .forEach(el => el.addEventListener('change', () => { setOptionsFromUI(); renderAll(); }));
 
+  // Keep scan input focused for fast workflows
   function focusScan(){ els.scanInput.focus({ preventScroll:true }); }
   document.addEventListener('click', focusScan);
   window.addEventListener('focus', focusScan);
 
+  // Scan on Enter; barcode scanners typically send Enter at the end
   els.scanInput.addEventListener('keydown', (e)=>{
     if (e.key === 'Enter') {
       const v = e.currentTarget.value; e.currentTarget.value='';
       if (v) scan(v); e.preventDefault();
     }
   });
+  // Also handle cases where scanners send a literal \n in the buffer
   els.scanInput.addEventListener('input', (e)=>{
     const v = e.currentTarget.value;
     if (v && v.endsWith('\\n')) { e.currentTarget.value = v.replace(/\\n+$/,''); if (e.currentTarget.value) scan(e.currentTarget.value); e.currentTarget.value=''; }
   });
 
+  // Buttons
   els.undoBtn.addEventListener('click', undo);
   els.clearBtn.addEventListener('click', ()=>{ if (!confirm('Clear current session (master, scans, options)?')) return;
     state.master.clear(); state.unknown.clear(); state.history = []; save(); renderAll(); });
 
+  // Export current reconciliation as CSV (includes unknowns at end)
   els.exportBtn.addEventListener('click', ()=>{
     const rows = [['sku','description','expected_qty','scanned_qty','over','status']];
     for (const e of state.master.values()) {
@@ -488,9 +565,11 @@
     const blob = new Blob([csv], { type:'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='inventory_reconcile.csv'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url), 1000);
   });
 
+  // Loading master from file or pasted data
   els.loadMasterBtn.addEventListener('click', async ()=>{
     const f = els.masterFile.files?.[0]; if (!f) { alert('Choose a file first.'); return; }
     try {
+      // Detect Excel by extension/MIME; otherwise treat as delimited text
       if (/\.(xlsx|xls)$/i.test(f.name) || (f.type && (f.type.includes('sheet') || f.type.includes('excel')))) {
         await loadExcel(f);
       } else {
@@ -505,6 +584,7 @@
     try { const rows = parseDelimited(text); loadMasterFromRows(rows); } catch(e){ alert(e.message || String(e)); }
   });
 
+  // Column mapping modal actions
   els.mapConfirm.addEventListener('click', ()=>{
     if (!state.importBuffer) return closeMapper();
     const skuIdx = els.mapSku.value === '' ? undefined : Number(els.mapSku.value);
@@ -517,6 +597,7 @@
   });
   els.mapCancel.addEventListener('click', ()=>{ state.importBuffer = null; closeMapper(); });
 
+  // Initialize app
   load(); focusScan();
 })();
 </script>
