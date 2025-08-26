@@ -164,7 +164,7 @@
     <div style="max-height: 260px; overflow:auto;">
       <table id="remainingTable">
         <thead>
-          <tr><th>SKU</th><th>Description</th><th>Scanned</th><th>Remaining</th></tr>
+          <tr><th>SKU</th><th>Description</th><th>Scanned</th><th>Remaining</th><th>Actions</th></tr>
         </thead>
         <tbody></tbody>
       </table>
@@ -425,24 +425,24 @@
   }
 
   function undo() {
-    // Revert the last scan action (known or unknown)
+    // Revert the last scan/manual action (known/unknown/manual)
     const last = state.history.pop();
     if (!last) return;
     if (last.type === 'known') {
       const e = state.master.get(last.norm); if (e && e.scanned > 0) e.scanned -= 1;
-    } else {
-      const c = state.unknown.get(last.norm) || 0; if (c <= 1) state.unknown.delete(last.norm); else state.unknown.set(last.norm, c - 1);
-    }
-    save(); renderAll(); toast('Undid last scan', true);
+    } else if (last.t
   }
 
   /* ======= RENDERING ======= */
   function renderAll() {
-    const entries = Array.from(state.master.values());
+    // Work with [norm, entry] pairs so we can attach actions by normalized key
+    const kv = Array.from(state.master.entries());
+    const entries = kv.map(([norm, e]) => ({ norm, e }));
+
     const expectedDistinct = entries.length;
-    const expectedQty = entries.reduce((a, e) => a + e.expected, 0);
-    const scannedQty = entries.reduce((a, e) => a + e.scanned, 0);
-    const remainingQty = entries.reduce((a, e) => a + Math.max(0, e.expected - e.scanned), 0);
+    const expectedQty = entries.reduce((a, o) => a + o.e.expected, 0);
+    const scannedQty = entries.reduce((a, o) => a + o.e.scanned, 0);
+    const remainingQty = entries.reduce((a, o) => a + Math.max(0, o.e.expected - o.e.scanned), 0);
     const unknownQty = Array.from(state.unknown.values()).reduce((a, n) => a + n, 0);
 
     // KPI counters
@@ -454,14 +454,16 @@
 
     // Remaining list: items still short, sorted by greatest remaining first
     const remaining = entries
-      .filter(e => e.expected - e.scanned > 0)
-      .sort((a,b) => (b.expected - b.scanned) - (a.expected - a.scanned) || a.sku.localeCompare(b.sku));
+      .filter(o => o.e.expected - o.e.scanned > 0)
+      .sort((a,b) => (b.e.expected - b.e.scanned) - (a.e.expected - a.e.scanned) || a.e.sku.localeCompare(b.e.sku));
 
-    renderTable(els.remainingTable, remaining.map(e => [
-      e.sku || '(no sku)',
-      e.desc || '',
-      String(e.scanned),
-      String(Math.max(0, e.expected - e.scanned))
+    renderTable(els.remainingTable, remaining.map(o => [
+      o.e.sku || '(no sku)',
+      o.e.desc || '',
+      String(o.e.scanned),
+      String(Math.max(0, o.e.expected - o.e.scanned)),
+      // Action buttons: mark one as shot, or minus one
+      `<div class="row"><button data-action="shot" data-norm="${o.norm}" class="primary">Shot</button><button data-action="minus" data-norm="${o.norm}">-1</button></div>`
     ]));
 
     // Full matched list sorted by SKU; compute status & visual row class
