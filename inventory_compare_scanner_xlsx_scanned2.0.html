@@ -1,3 +1,7 @@
+state.history = obj.history || [];
+      // ADDED: restore stable Remaining order
+      state.remainingOrder = obj.remainingOrder || {};
+      state.remainingOrderNext = obj.remainingOrderNext || 0;
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -187,7 +191,10 @@
     unknown: new Map(),    // Map(normSku -> count) for not-in-master scans
     history: [],           // array of { type:'known'|'unknown', norm, ts, [src] }
     options: { caseInsensitive:true, trim:true, ignoreWhitespace:true, dropNonAlnum:true, stripLeadingZeros:false, beep:true },
-    importBuffer: null     // holds rows while user maps columns
+    importBuffer: null,     // holds rows while user maps columns
+    // ADDED: stable order for Remaining rows
+    remainingOrder: {},
+    remainingOrderNext: 0
   };
 
   // Cache DOM elements
@@ -235,7 +242,9 @@
       master: Array.from(state.master.entries()),
       unknown: Array.from(state.unknown.entries()),
       history: state.history,
-      options: state.options
+      options: state.options,
+      remainingOrder: state.remainingOrder,
+      remainingOrderNext: state.remainingOrderNext
     }));
   }
   function load() {
@@ -255,6 +264,30 @@
       els.optBeep.checked = state.options.beep;
       renderAll();
     } catch(e) { console.error(e); }
+  }
+
+  // ------------------------------
+  // REMAINING ORDER HELPERS (ADDED)
+  // ------------------------------
+  function initRemainingOrder() {
+    // Initialize a stable order for items that are currently remaining (>0)
+    state.remainingOrder = state.remainingOrder || {};
+    state.remainingOrderNext = 0;
+    const entries = Array.from(state.master.values());
+    const initial = entries
+      .filter(e => (e.expected || 0) - (e.scanned || 0) > 0)
+      .sort((a,b) => ( (b.expected - b.scanned) - (a.expected - a.scanned) ) || a.sku.localeCompare(b.sku));
+    for (const e of initial) {
+      const norm = normalize(e.sku);
+      if (state.remainingOrder[norm] == null) {
+        state.remainingOrder[norm] = state.remainingOrderNext++;
+      }
+    }
+  }
+  function ensureOrderFor(norm) {
+    if (state.remainingOrder[norm] == null) {
+      state.remainingOrder[norm] = state.remainingOrderNext++;
+    }
   }
 
   // ------------------------------
@@ -338,6 +371,10 @@
     state.master = master;
     state.unknown = new Map();
     state.history = [];
+    // ADDED: reset and initialize stable Remaining order
+    state.remainingOrder = {};
+    state.remainingOrderNext = 0;
+    initRemainingOrder();
     save(); renderAll();
     toast(`Master loaded: ${master.size} SKUs, total qty ${total}`, true);
   }
@@ -398,13 +435,29 @@
   }
 
   function manualShot(skuOrNorm, amount = 1) {
-    // ADDED: increment scanned count from a button click in Remaining table
+    // ADJUSTED: only increment if there's still quantity remaining; keep row until < 1 remains
     const norm = normalize(skuOrNorm);
     const entry = state.master.get(norm);
     if (!entry) { flash('Not in master: ' + skuOrNorm, false); beep(false); return; }
+
+    const beforeRemaining = Math.max(0, (entry.expected || 0) - (entry.scanned || 0));
+    if (beforeRemaining <= 0) {
+      // nothing left to shoot; show a gentle notice
+      flash('Already complete: ' + (entry.sku || norm), true); beep(true);
+      return;
+    }
+
     entry.scanned = (entry.scanned || 0) + amount;
     state.history.push({ type: 'known', norm, ts: new Date().toISOString(), src: 'manual' });
-    save(); renderAll(); beep(true);
+    save(); renderAll();
+
+    const afterRemaining = Math.max(0, (entry.expected || 0) - (entry.scanned || 0));
+    if (afterRemaining <= 0) {
+      flash('Completed: ' + (entry.sku || norm), true);
+    } else {
+      flash(`Shot +${amount} → ${afterRemaining} remaining`, true);
+    }
+    beep(true);
   }
 
   function undo() {
@@ -434,18 +487,23 @@
 
     // Remaining list (only items still short), sorted by largest remainder
     const remaining = entries
-      .filter(e => e.expected - e.scanned > 0)
-      .sort((a,b) => (b.expected - b.scanned) - (a.expected - a.scanned) || a.sku.localeCompare(b.sku));
+      .filter(e => e.expected - e.scanned > 0);
 
-    // ADDED: render an Action button per row to increment scanned without typing
+    // ADDED: keep stable position by sorting with saved order index
+    for (const e of remaining) {
+      ensureOrderFor(normalize(e.sku));
+    }
+    remaining.sort((a,b) => state.remainingOrder[normalize(a.sku)] - state.remainingOrder[normalize(b.sku)]);
+
     renderTable(els.remainingTable, remaining.map(e => {
       const normKey = normalize(e.sku);
+      const remainingLeft = Math.max(0, e.expected - e.scanned);
       return [
         e.sku || '(no sku)',
         e.desc || '',
         String(e.scanned),
-        String(Math.max(0, e.expected - e.scanned)),
-        `<button class="mini" data-action="shot" data-norm="${normKey}">Shot +1</button>`
+        String(remainingLeft),
+        `<button class=\"mini\" data-action=\"shot\" data-norm=\"${normKey}\">Shot +1</button>`
       ];
     }));
 
@@ -536,7 +594,9 @@
 
   els.undoBtn.addEventListener('click', undo);
   els.clearBtn.addEventListener('click', ()=>{ if (!confirm('Clear current session (master, scans, options)?')) return;
-    state.master.clear(); state.unknown.clear(); state.history = []; save(); renderAll(); });
+    state.master.clear(); state.unknown.clear(); state.history = [];
+    state.remainingOrder = {}; state.remainingOrderNext = 0;
+    save(); renderAll(); });
 
   els.exportBtn.addEventListener('click', ()=>{
     // Export reconciliation as CSV
