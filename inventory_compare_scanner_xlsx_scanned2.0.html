@@ -11,7 +11,7 @@
   .card { background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.25); padding:16px; margin-top:18px; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th,td { border-bottom:1px solid var(--border); padding:8px; text-align:left; }
-  button { background:#111827; color:var(--text); border:1px solid var(--border); border-radius:10px; padding:6px 10px; cursor:pointer; font-size:12px; }
+  button { background:#111827; color:var(--text); border:1px solid var(--border); border-radius:10px; padding:6px 10px; cursor:pointer; font-size:12px; margin:2px; }
   button:hover { background:#0d1322; }
 </style>
 </head>
@@ -20,11 +20,26 @@
   <h1>Inventory Compare & Live Scan — CSV/XLSX</h1>
 </header>
 <div class="container">
+  <div class="card" style="margin-top:18px;">
+    <h2>Manual Mark-Off Controls</h2>
+    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+      <label><input type="checkbox" id="enableManual" checked> Enable manual mark-off</label>
+      <label>Qty per click:
+        <select id="shotQty">
+          <option value="1" selected>+1</option>
+          <option value="2">+2</option>
+          <option value="5">+5</option>
+        </select>
+      </label>
+      <button id="markAllVisible" title="Marks the full remaining amount for each visible row">Mark all visible as shot</button>
+    </div>
+    <p class="small">Scroll the table below; use the buttons to mark items as shot manually.</p>
+  </div>
   <div class="card">
     <h2>Remaining (Manual Mark-Off Enabled)</h2>
-    <div style="max-height: 260px; overflow:auto;">
+    <div id="remainingScroll" style="max-height: 360px; overflow:auto; scroll-behavior:smooth;">
       <table id="remainingTable">
-        <thead><tr><th>SKU</th><th>Description</th><th>Scanned</th><th>Remaining</th><th>Action</th></tr></thead>
+        <thead><tr><th>SKU</th><th>Description</th><th>Scanned</th><th>Remaining</th><th>Actions</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -33,34 +48,77 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 (() => {
-  const state = { master:new Map() };
-  const els = { remainingTable: document.querySelector('#remainingTable tbody') };
+  const state = { master:new Map(), history:[], options:{ manual:true } };
+  const els = { remainingTable: document.querySelector('#remainingTable tbody'), remainingScroll: document.getElementById('remainingScroll'), enableManual: document.getElementById('enableManual'), shotQty: document.getElementById('shotQty'), markAllVisible: document.getElementById('markAllVisible') };
 
   // Dummy data for demo — normally loaded via CSV/XLSX
   state.master.set('ABC',{ sku:'ABC', desc:'Widget A', expected:10, scanned:3 });
   state.master.set('DEF',{ sku:'DEF', desc:'Widget B', expected:5, scanned:2 });
+  state.master.set('GHI',{ sku:'GHI', desc:'Widget C', expected:8, scanned:0 });
 
   function renderRemaining(){
-    const entries = Array.from(state.master.values()).filter(e=> e.expected > e.scanned);
+    const entries = Array.from(state.master.entries())
+      .map(([norm,e])=>({norm,e}))
+      .filter(o=> o.e.expected > o.e.scanned);
     els.remainingTable.innerHTML='';
-    for(const e of entries){
+    for(const o of entries){
+      const e = o.e;
       const tr=document.createElement('tr');
       tr.innerHTML = `<td>${e.sku}</td><td>${e.desc}</td><td>${e.scanned}</td><td>${e.expected - e.scanned}</td>`;
       const tdAct=document.createElement('td');
-      const btn=document.createElement('button');
-      btn.textContent='Mark One Shot';
-      btn.addEventListener('click',()=>{ markOneShot(e.sku); });
-      tdAct.appendChild(btn);
+      const btnPlus=document.createElement('button');
+      btnPlus.textContent='Shot';
+      btnPlus.disabled = !state.options.manual;
+      btnPlus.addEventListener('click',()=> markOneShotQty(o.norm));
+      const btnMinus=document.createElement('button');
+      btnMinus.textContent='-1';
+      btnMinus.style.marginLeft='8px';
+      btnMinus.disabled = !state.options.manual;
+      btnMinus.addEventListener('click',()=> decrementShot(o.norm));
+      tdAct.appendChild(btnPlus);
+      tdAct.appendChild(btnMinus);
       tr.appendChild(tdAct);
       els.remainingTable.appendChild(tr);
     }
   }
+  }
 
-  function markOneShot(sku){
+  function markShot(sku, count){
     const entry = state.master.get(sku);
-    if(entry && entry.scanned < entry.expected){
-      entry.scanned += 1;
-      renderRemaining();
+    if(entry){
+      entry.scanned = Math.min(entry.expected, entry.scanned + count);
+      // Extra helpers for manual mark-off
+  function markOneShotQty(norm){
+    const e = state.master.get(norm); if(!e) return;
+    const step = Math.max(1, parseInt(els.shotQty.value||'1',10));
+    const add = Math.min(step, e.expected - e.scanned);
+    if(add <= 0) return;
+    e.scanned += add; state.history.push({type:'manual', norm, delta:add, ts:Date.now()});
+    renderRemaining();
+  }
+  function decrementShot(norm){
+    const e = state.master.get(norm); if(!e) return;
+    if(e.scanned <= 0) return;
+    e.scanned -= 1; state.history.push({type:'manual', norm, delta:-1, ts:Date.now()});
+    renderRemaining();
+  }
+  // Toggle manual mode
+  els.enableManual.addEventListener('change',()=>{ state.options.manual = !!els.enableManual.checked; renderRemaining(); });
+  // Mark all visible rows in the scroll viewport
+  els.markAllVisible.addEventListener('click',()=>{
+    const rows = Array.from(els.remainingTable.querySelectorAll('tr'));
+    const viewTop = els.remainingScroll.scrollTop;
+    const viewBottom = viewTop + els.remainingScroll.clientHeight;
+    for(const row of rows){
+      const top = row.offsetTop; const bottom = top + row.offsetHeight;
+      if(bottom > viewTop && top < viewBottom){
+        const sku = row.children[0]?.textContent?.trim();
+        if(sku) markOneShotQty(sku);
+      }
+    }
+  });
+
+  renderRemaining();
     }
   }
 
@@ -69,3 +127,4 @@
 </script>
 </body>
 </html>
+
