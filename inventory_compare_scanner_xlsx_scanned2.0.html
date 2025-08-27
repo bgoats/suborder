@@ -139,6 +139,10 @@ state.history = obj.history || [];
 
   <div class="card" style="margin-top:18px;">
     <h2>Remaining</h2>
+    <!-- ADDED: search bar for Remaining -->
+    <div class="row" style="margin:6px 0 8px 0;">
+      <input id="filterRemaining" type="text" placeholder="Search Remaining by SKU or description" style="flex:1;" />
+    </div>
     <div style="max-height: 260px; overflow:auto;">
       <!-- ADDED: An Action column to enable per-row Shot button -->
       <table id="remainingTable">
@@ -152,6 +156,10 @@ state.history = obj.history || [];
 
   <div class="card" style="margin-top:18px;">
     <h2>Matched Summary</h2>
+    <!-- ADDED: search bar for Matched Summary -->
+    <div class="row" style="margin:6px 0 8px 0;">
+      <input id="filterMatched" type="text" placeholder="Search Matched by SKU or description" style="flex:1;" />
+    </div>
     <div style="max-height: 320px; overflow:auto;">
       <table id="matchedTable">
         <thead><tr><th>SKU</th><th>Description</th><th>Expected</th><th>Scanned</th><th>Over</th><th>Status</th></tr></thead><tbody></tbody>
@@ -194,7 +202,10 @@ state.history = obj.history || [];
     importBuffer: null,     // holds rows while user maps columns
     // ADDED: stable order for Remaining rows
     remainingOrder: {},
-    remainingOrderNext: 0
+    remainingOrderNext: 0,
+    // ADDED: search filters state
+    remainingFilter: '',
+    matchedFilter: ''
   };
 
   // Cache DOM elements
@@ -228,7 +239,10 @@ state.history = obj.history || [];
     mapDesc: document.getElementById('mapDesc'),
     mapConfirm: document.getElementById('mapConfirm'),
     mapCancel: document.getElementById('mapCancel'),
-    mapPreview: document.getElementById('mapPreview')
+    mapPreview: document.getElementById('mapPreview'),
+    // ADDED: search input elements
+    filterRemaining: document.getElementById('filterRemaining'),
+    filterMatched: document.getElementById('filterMatched')
   };
 
   const STORAGE_KEY = 'inv-scan-v3-scanned-remaining';
@@ -244,7 +258,10 @@ state.history = obj.history || [];
       history: state.history,
       options: state.options,
       remainingOrder: state.remainingOrder,
-      remainingOrderNext: state.remainingOrderNext
+      remainingOrderNext: state.remainingOrderNext,
+      // ADDED: persist filters
+      remainingFilter: state.remainingFilter,
+      matchedFilter: state.matchedFilter
     }));
   }
   function load() {
@@ -262,6 +279,11 @@ state.history = obj.history || [];
       els.optDropNonAlnum.checked = state.options.dropNonAlnum;
       els.optStripZeros.checked = state.options.stripLeadingZeros;
       els.optBeep.checked = state.options.beep;
+      // ADDED: restore filters
+      state.remainingFilter = obj.remainingFilter || '';
+      state.matchedFilter = obj.matchedFilter || '';
+      if (els.filterRemaining) els.filterRemaining.value = state.remainingFilter;
+      if (els.filterMatched) els.filterMatched.value = state.matchedFilter;
       renderAll();
     } catch(e) { console.error(e); }
   }
@@ -363,9 +385,20 @@ state.history = obj.history || [];
       const desc = descIdx !== undefined ? (r[descIdx] ?? '') : '';
       const norm = normalize(skuRaw);
       const qty = Number(String(qtyRaw).trim().replace(/,/g,'')) || 0;
-      if (!norm) continue;
-      if (!master.has(norm)) master.set(norm, { sku: String(skuRaw).trim(), desc: String(desc).trim(), expected: 0, scanned: 0 });
-      master.get(norm).expected += qty;
+
+      // ADDED: allow blank SKU or 'ABEL' to be loaded as manual-only rows that appear in Remaining
+      const isManualOnly = (!norm) || (norm === 'ABEL');
+
+      // Do not skip blank/ABEL: include them as items that must be shot via button
+      // (Other items behave normally.)
+      if (!master.has(norm)) {
+        master.set(norm, { sku: String(skuRaw).trim(), desc: String(desc).trim(), expected: 0, scanned: 0, manualOnly: isManualOnly });
+      }
+      const entry = master.get(norm);
+      entry.expected += qty;
+      // Once manualOnly, always manualOnly for this norm
+      entry.manualOnly = entry.manualOnly || isManualOnly;
+
       total += qty;
     }
     state.master = master;
@@ -418,9 +451,17 @@ state.history = obj.history || [];
     // Handles scans or typed SKUs (Enter)
     const ts = new Date().toISOString();
     const norm = normalize(value);
-    if (!norm) return;
+    if (!norm) return; // still ignore completely blank input from the scanner/keyboard
+
+    // Block direct scanning of the reserved 'ABEL' code regardless of master
+    if (norm === 'ABEL') { flash('ABEL must be marked with the Shot button', false); beep(false); return; }
+
     const entry = state.master.get(norm);
     if (entry) {
+      // ADDED: items flagged manualOnly (blank or ABEL at import) cannot be incremented by typing/scanning
+      if (entry.manualOnly) {
+        flash('This item must be marked using the Shot button', false); beep(false); return;
+      }
       entry.scanned += 1;
       state.history.push({ type:'known', norm, ts });
       flash('MATCH: ' + entry.sku, true); beep(true);
@@ -473,7 +514,7 @@ state.history = obj.history || [];
   // RENDERING
   // ------------------------------
   function renderAll() {
-    const entries = Array.from(state.master.values());
+    const entries = Array.from(state.master.values());(state.master.values());
     const expectedDistinct = entries.length;
     const expectedQty = entries.reduce((a, e) => a + e.expected, 0);
     const scannedQty = entries.reduce((a, e) => a + e.scanned, 0);
@@ -489,13 +530,21 @@ state.history = obj.history || [];
     const remaining = entries
       .filter(e => e.expected - e.scanned > 0);
 
-    // ADDED: keep stable position by sorting with saved order index
-    for (const e of remaining) {
+    // ADDED: text filter for Remaining
+    const qRem = (state.remainingFilter || '').toString().trim().toUpperCase();
+    const filteredRemaining = qRem ? remaining.filter(e => {
+      const skuNorm = normalize(e.sku);
+      const descU = (e.desc || '').toUpperCase();
+      return skuNorm.includes(qRem) || descU.includes(qRem);
+    }) : remaining;
+
+    // Keep stable position by sorting with saved order index
+    for (const e of filteredRemaining) {
       ensureOrderFor(normalize(e.sku));
     }
-    remaining.sort((a,b) => state.remainingOrder[normalize(a.sku)] - state.remainingOrder[normalize(b.sku)]);
+    filteredRemaining.sort((a,b) => state.remainingOrder[normalize(a.sku)] - state.remainingOrder[normalize(b.sku)]);
 
-    renderTable(els.remainingTable, remaining.map(e => {
+    renderTable(els.remainingTable, filteredRemaining.map(e => {
       const normKey = normalize(e.sku);
       const remainingLeft = Math.max(0, e.expected - e.scanned);
       return [
@@ -508,7 +557,14 @@ state.history = obj.history || [];
     }));
 
     // Full matched summary with status highlight
-    const matched = entries.slice().sort((a,b)=> a.sku.localeCompare(b.sku));
+    // ADDED: filter Matched Summary by query then sort by SKU
+    const qMat = (state.matchedFilter || '').toString().trim().toUpperCase();
+    const matched = entries.filter(e => {
+      if (!qMat) return true;
+      const skuNorm = normalize(e.sku);
+      const descU = (e.desc || '').toUpperCase();
+      return skuNorm.includes(qMat) || descU.includes(qMat);
+    }).sort((a,b)=> a.sku.localeCompare(b.sku));
     renderTable(els.matchedTable, matched.map(e => {
       const over = Math.max(0, e.scanned - e.expected);
       const status = over > 0 ? 'over' : (e.scanned < e.expected ? 'short' : 'ok');
@@ -577,7 +633,11 @@ state.history = obj.history || [];
     .forEach(el => el.addEventListener('change', () => { setOptionsFromUI(); renderAll(); }));
 
   function focusScan(){ els.scanInput.focus({ preventScroll:true }); }
-  document.addEventListener('click', focusScan);
+  // ADJUSTED: only auto-focus scanInput if click is outside the search bars
+  document.addEventListener('click', (e)=>{
+    if (e.target === els.filterRemaining || e.target === els.filterMatched) return;
+    focusScan();
+  });
   window.addEventListener('focus', focusScan);
 
   // Scan input: Enter key or wedge scanners that append a newline
@@ -629,6 +689,14 @@ state.history = obj.history || [];
     if (!text.trim()) { alert('Paste data first.'); return; }
     try { const rows = parseDelimited(text); loadMasterFromRows(rows); } catch(e){ alert(e.message || String(e)); }
   });
+
+  // ADDED: search listeners (simple, no debounce)
+  if (els.filterRemaining) {
+    els.filterRemaining.addEventListener('input', (e)=>{ state.remainingFilter = e.target.value; save(); renderAll(); });
+  }
+  if (els.filterMatched) {
+    els.filterMatched.addEventListener('input', (e)=>{ state.matchedFilter = e.target.value; save(); renderAll(); });
+  }
 
   els.mapConfirm.addEventListener('click', ()=>{
     // Apply selected column mapping from modal
