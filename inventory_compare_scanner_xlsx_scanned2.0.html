@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Inventory Compare & Scan — CSV/XLSX (Remaining shows Scanned) + Per-row Shot Button</title>
+<title>Inventory Compare & Scan — CSV/XLSX (No Over-Scan, Louder Beeps)</title>
 <style>
   :root {
     --bg: #0f172a; --panel: #111827; --panel2: #0b1220; --text: #e5e7eb;
@@ -44,22 +44,14 @@
   th { color:var(--muted); font-weight:600; }
   tr.ok td { background: rgba(34,197,94,0.05); }
   tr.short td { background: rgba(245,158,11,0.06); }
-  tr.over td { background: rgba(239,68,68,0.06); }
   .pill { padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid var(--border); }
   .pill.ok { background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.35); }
   .pill.short { background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.35); }
-  .pill.over { background: rgba(239,68,68,0.15); border-color: rgba(239,68,68,0.35); }
   .log { max-height:180px; overflow:auto; border:1px solid var(--border); border-radius:12px; padding:10px; background:var(--panel2); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size:12px; }
   details { border:1px solid var(--border); border-radius:12px; padding:10px 12px; background: rgba(255,255,255,0.02); }
   summary { cursor:pointer; }
-  .modal {
-    position: fixed; inset: 0; display:none; align-items:center; justify-content:center;
-    background: rgba(0,0,0,0.45); z-index: 60;
-  }
-  .modal .panel {
-    width: min(640px, 92vw); background: #0e1528; border:1px solid var(--border); border-radius:14px; padding:16px;
-    box-shadow: 0 25px 80px rgba(0,0,0,0.45);
-  }
+  .modal { position: fixed; inset: 0; display:none; align-items:center; justify-content:center; background: rgba(0,0,0,0.45); z-index: 60; }
+  .modal .panel { width: min(640px, 92vw); background: #0e1528; border:1px solid var(--border); border-radius:14px; padding:16px; box-shadow: 0 25px 80px rgba(0,0,0,0.45); }
   button.mini { padding:6px 10px; font-size:12px; border-radius:8px; }
 </style>
 </head>
@@ -153,7 +145,7 @@
     </div>
     <div style="max-height: 320px; overflow:auto;">
       <table id="matchedTable">
-        <thead><tr><th>SKU</th><th>Description</th><th>Expected</th><th>Scanned</th><th>Over</th><th>Status</th></tr></thead><tbody></tbody>
+        <thead><tr><th>SKU</th><th>Description</th><th>Expected</th><th>Scanned</th><th>Status</th></tr></thead><tbody></tbody>
       </table>
     </div>
   </div>
@@ -183,11 +175,9 @@
   // APP STATE
   // ------------------------------
   const state = {
-    // Entries are stored in a Map keyed by a composite key (see makeKey)
-    // value shape: { key, sku, desc, expected, scanned, manualOnly }
     master: new Map(),
-    unknown: new Map(),    // Map(normSku -> count)
-    history: [],           // array of { type:'known'|'unknown', key?, norm?, ts, src? }
+    unknown: new Map(),
+    history: [],
     options: { caseInsensitive:true, trim:true, ignoreWhitespace:true, dropNonAlnum:true, stripLeadingZeros:false, beep:true },
     importBuffer: null,
     remainingOrder: {},
@@ -216,7 +206,7 @@
       const nDesc = (desc ?? '').toString().trim().toUpperCase();
       return (nSku || '__BLANK__') + '|' + nDesc;
     }
-    return nSku; // normal SKUs keyed by normalized SKU only
+    return nSku;
   }
   function getEntryByKey(key){ return state.master.get(key); }
 
@@ -313,28 +303,22 @@
     try {
       const obj = JSON.parse(raw);
       state.master = new Map(obj.master);
-      // migration: ensure entry.key exists and matches its Map key
       state.master.forEach((v, k) => { if (!v || typeof v !== 'object') return; if (!v.key) v.key = k; });
-
       state.unknown = new Map(obj.unknown);
       state.history = obj.history || [];
       Object.assign(state.options, obj.options || {});
-
       els.optCase.checked = state.options.caseInsensitive;
       els.optTrim.checked = state.options.trim;
       els.optIgnoreWS.checked = state.options.ignoreWhitespace;
       els.optDropNonAlnum.checked = state.options.dropNonAlnum;
       els.optStripZeros.checked = state.options.stripLeadingZeros;
       els.optBeep.checked = state.options.beep;
-
       state.remainingFilter = obj.remainingFilter || '';
       state.matchedFilter = obj.matchedFilter || '';
       if (els.filterRemaining) els.filterRemaining.value = state.remainingFilter;
       if (els.filterMatched) els.filterMatched.value = state.matchedFilter;
-
       state.remainingOrder = obj.remainingOrder || {};
       state.remainingOrderNext = obj.remainingOrderNext || 0;
-
       renderAll();
     } catch(e) { console.error(e); }
   }
@@ -397,52 +381,44 @@
     if (!rows.length) throw new Error('No rows found');
     const headers = rows[0];
     const idx = mapping || toHeaderIndex(headers);
-
     if (!mapping && (idx.skuIdx === undefined || idx.qtyIdx === undefined)) {
       openMapper(headers, rows.slice(1,6));
       state.importBuffer = rows;
       return;
     }
-
     const skuIdx = mapping ? mapping.skuIdx : idx.skuIdx;
     const qtyIdx = mapping ? mapping.qtyIdx : idx.qtyIdx;
     const descIdx = mapping ? mapping.descIdx : idx.descIdx;
-
     const master = new Map();
     let total = 0;
-
     for (let i = 1; i < rows.length; i++) {
       const r = rows[i]; if (!r || r.length === 0) continue;
       const skuRaw = r[skuIdx] ?? '';
       const qtyRaw = r[qtyIdx] ?? '0';
       const descRaw = descIdx !== undefined ? (r[descIdx] ?? '') : '';
-
       const qty = Number(String(qtyRaw).trim().replace(/,/g,'')) || 0;
       const normSku = normalize(skuRaw);
       const manualOnly = isManualOnlySku(normSku);
       const key = makeKey(skuRaw, descRaw);
-
       if (!master.has(key)) {
         master.set(key, { key, sku: String(skuRaw).trim(), desc: String(descRaw).trim(), expected: 0, scanned: 0, manualOnly });
       }
       const entry = master.get(key);
       entry.expected += qty;
       entry.manualOnly = entry.manualOnly || manualOnly;
-
       total += qty;
     }
-
     state.master = master;
     state.unknown = new Map();
     state.history = [];
-    state.remainingOrder = {}; state.remainingOrderNext = 0; // reset stable order
+    state.remainingOrder = {}; state.remainingOrderNext = 0;
     initRemainingOrder();
     save(); renderAll();
     toast(`Master loaded: ${master.size} items, total qty ${total}`, true);
   }
 
   // ------------------------------
-  // SCANNING (with double-scan guard)
+  // SCANNING (double-scan guard + no-over + error beep when already complete)
   // ------------------------------
   let lastScan = { norm:null, ts:0 };
   const DOUBLE_SCAN_MS = 300;
@@ -452,20 +428,24 @@
     const norm = normalize(value);
     if (!norm) return;
 
-    // double-scan guard
     const now = Date.now();
     if (norm === lastScan.norm && now - lastScan.ts < DOUBLE_SCAN_MS) return;
     lastScan = { norm, ts: now };
 
     if (norm === 'ABEL') { flash('ABEL must be marked with the Shot button', false); beep(false); return; }
 
-    // find an entry that is not manualOnly and whose normalized SKU matches
     let entry = null;
     for (const e of state.master.values()) {
       if (!e.manualOnly && normalize(e.sku) === norm) { entry = e; break; }
     }
 
     if (entry) {
+      const remaining = Math.max(0, (entry.expected || 0) - (entry.scanned || 0));
+      if (remaining <= 0) {
+        flash('Already complete: ' + (entry.sku || norm), false);
+        beep(false);
+        return;
+      }
       entry.scanned += 1;
       state.history.push({ type:'known', key: entry.key, norm, ts });
       flash('MATCH: ' + (entry.sku || norm), true); beep(true);
@@ -484,14 +464,19 @@
     if (!entry) { flash('Not in master', false); beep(false); return; }
 
     const before = Math.max(0, (entry.expected||0) - (entry.scanned||0));
-    if (before <= 0) { flash('Already complete: ' + (entry.sku || '(no sku)'), true); beep(true); return; }
+    if (before <= 0) {
+      flash('Already complete: ' + (entry.sku || '(no sku)'), false);
+      beep(false);
+      return;
+    }
 
-    entry.scanned = (entry.scanned || 0) + amount;
+    const add = Math.min(amount, before);
+    entry.scanned = (entry.scanned || 0) + add;
     state.history.push({ type: 'known', key: entry.key, ts: new Date().toISOString(), src: 'manual' });
     save(); renderAll();
 
     const after = Math.max(0, (entry.expected||0) - (entry.scanned||0));
-    flash(after <= 0 ? ('Completed: ' + (entry.sku || '(no sku)')) : (`Shot +${amount} → ${after} remaining`), true);
+    flash(after <= 0 ? ('Completed: ' + (entry.sku || '(no sku)')) : (`Shot +${add} → ${after} remaining`), true);
     beep(true);
   }
 
@@ -524,7 +509,6 @@
     els.kRemainingQty.textContent = remainingQty;
     els.kUnknownQty.textContent = unknownQty;
 
-    // Remaining
     const remaining = entries.filter(e => (e.expected||0) - (e.scanned||0) > 0);
     const qRem = (state.remainingFilter || '').toString().trim().toUpperCase();
     const filteredRemaining = qRem ? remaining.filter(e => {
@@ -547,7 +531,6 @@
       ];
     }));
 
-    // Matched Summary
     const qMat = (state.matchedFilter || '').toString().trim().toUpperCase();
     const matched = entries.filter(e => {
       if (!qMat) return true;
@@ -557,16 +540,16 @@
     }).sort((a,b)=> (a.sku||'').localeCompare(b.sku||''));
 
     renderTable(els.matchedTable, matched.map(e => {
-      const over = Math.max(0, (e.scanned||0) - (e.expected||0));
-      const status = over > 0 ? 'over' : ((e.scanned||0) < (e.expected||0) ? 'short' : 'ok');
-      return { rowClass: status, cells: [e.sku||'(no sku)', e.desc||'', String(e.expected||0), String(e.scanned||0), String(over), `<span class="pill ${status}">${status.toUpperCase()}</span>`] };
+      const status = (e.scanned||0) < (e.expected||0) ? 'short' : 'ok';
+      return { rowClass: status, cells: [
+        e.sku||'(no sku)', e.desc||'', String(e.expected||0), String(e.scanned||0),
+        `<span class=\"pill ${status}\">${status.toUpperCase()}</span>`
+      ]};
     }), true);
 
-    // Unknown items summary
     const unkRows = Array.from(state.unknown.entries()).sort((a,b)=> b[1]-a[1]).map(([norm,count])=>[norm, String(count)]);
     renderTable(els.unknownTable, unkRows);
 
-    // Recent log
     const logLines = state.history.slice(-50).map(h => {
       const time = new Date(h.ts).toLocaleTimeString();
       if (h.type === 'known') {
@@ -600,11 +583,16 @@
   let audioCtx = null;
   function ensureAudio(){ if (!audioCtx){ try{ audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }catch{} } }
   function beep(ok){ if(!state.options.beep) return; ensureAudio(); if(!audioCtx) return;
-    const duration = ok?0.08:0.18, freq= ok?850:220;
+    const duration = ok ? 0.10 : 0.22; // slightly longer
+    const freq = ok ? 900 : 180;       // success higher, error low buzz
+    const peak = ok ? 0.18 : 0.22;     // louder overall
     const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
-    osc.type = ok ? 'square' : 'sawtooth'; osc.frequency.value=freq; osc.connect(gain); gain.connect(audioCtx.destination);
-    gain.gain.setValueAtTime(0.001, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.06, audioCtx.currentTime+0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime+duration); osc.start(); osc.stop(audioCtx.currentTime+duration+0.02);
+    osc.type = ok ? 'square' : 'sawtooth'; osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    gain.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(peak, audioCtx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+    osc.start(); osc.stop(audioCtx.currentTime + duration + 0.05);
   }
   function flash(msg, ok){ const overlay = document.createElement('div'); overlay.style.cssText="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);z-index:50";
     const bubble = document.createElement('div'); bubble.textContent = msg; bubble.style.cssText = "padding:14px 22px;border-radius:12px;font-size:18px;font-weight:700;border:1px solid var(--border);box-shadow:0 10px 40px rgba(0,0,0,0.35);background:" + (ok?"rgba(34,197,94,0.2)":"rgba(239,68,68,0.2)");
@@ -629,13 +617,11 @@
   function focusScan(){ els.scanInput?.focus({ preventScroll:true }); }
   document.addEventListener('click', (e)=>{
     const t = e.target;
-    // Don’t steal focus if user is interacting with inputs, selects, textareas, buttons or the modal
     if (t.closest('input, textarea, select, button, .modal')) return;
     focusScan();
   });
   window.addEventListener('focus', focusScan);
 
-  // Scan input: Enter key or wedge scanners that append a newline
   els.scanInput.addEventListener('keydown', (e)=>{
     if (e.key === 'Enter') {
       const v = e.currentTarget.value; e.currentTarget.value='';
@@ -654,11 +640,10 @@
     save(); renderAll(); });
 
   els.exportBtn.addEventListener('click', ()=>{
-    const rows = [['sku','description','expected_qty','scanned_qty','over','status']];
+    const rows = [['sku','description','expected_qty','scanned_qty','status']];
     for (const e of state.master.values()) {
-      const over = Math.max(0, (e.scanned||0) - (e.expected||0));
-      const status = over > 0 ? 'OVER' : ((e.scanned||0) < (e.expected||0) ? 'SHORT' : 'OK');
-      rows.push([e.sku || '', e.desc || '', e.expected||0, e.scanned||0, over, status]);
+      const status = (e.scanned || 0) < (e.expected || 0) ? 'SHORT' : 'OK';
+      rows.push([e.sku || '', e.desc || '', e.expected||0, e.scanned||0, status]);
     }
     if (state.unknown.size) { rows.push([]); rows.push(['unknown_sku','count']); for (const [sku,count] of state.unknown.entries()) rows.push([sku,count]); }
     const csv = rows.map(r => r.map(cell => { const s = String(cell ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; }).join(',')).join('\n');
@@ -697,14 +682,12 @@
   });
   els.mapCancel.addEventListener('click', ()=>{ state.importBuffer = null; closeMapper(); });
 
-  // Per-row Shot button
   els.remainingTable.addEventListener('click', (ev) => {
     const btn = ev.target.closest('[data-action="shot"]');
     if (!btn) return;
     manualShot(btn.dataset.key, 1);
   });
 
-  // Init
   load();
   function focusScan(){ els.scanInput?.focus({ preventScroll:true }); }
   focusScan();
