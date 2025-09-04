@@ -1,7 +1,3 @@
-state.history = obj.history || [];
-      // ADDED: restore stable Remaining order
-      state.remainingOrder = obj.remainingOrder || {};
-      state.remainingOrderNext = obj.remainingOrderNext || 0;
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -64,8 +60,6 @@ state.history = obj.history || [];
     width: min(640px, 92vw); background: #0e1528; border:1px solid var(--border); border-radius:14px; padding:16px;
     box-shadow: 0 25px 80px rgba(0,0,0,0.45);
   }
-
-  /* ADDED: tiny action buttons inside tables for per-row actions */
   button.mini { padding:6px 10px; font-size:12px; border-radius:8px; }
 </style>
 </head>
@@ -113,7 +107,7 @@ state.history = obj.history || [];
       </div>
 
       <div class="kpi">
-        <div class="box"><div class="value" id="kExpected">0</div><div class="label">Distinct SKUs (master)</div></div>
+        <div class="box"><div class="value" id="kExpected">0</div><div class="label">Distinct items (master)</div></div>
         <div class="box"><div class="value" id="kExpectedQty">0</div><div class="label">Total expected qty</div></div>
         <div class="box"><div class="value" id="kScannedQty">0</div><div class="label">Total scanned qty</div></div>
       </div>
@@ -132,19 +126,17 @@ state.history = obj.history || [];
       </div>
       <h3 style="margin-top:16px;">Unknown items</h3>
       <div style="max-height: 220px; overflow:auto;">
-        <table id="unknownTable"><thead><tr><th>SKU</th><th>Count</th></tr></thead><tbody></tbody></table>
+        <table id="unknownTable"><thead><tr><th>Normalized SKU</th><th>Count</th></tr></thead><tbody></tbody></table>
       </div>
     </div>
   </div>
 
   <div class="card" style="margin-top:18px;">
     <h2>Remaining</h2>
-    <!-- ADDED: search bar for Remaining -->
     <div class="row" style="margin:6px 0 8px 0;">
       <input id="filterRemaining" type="text" placeholder="Search Remaining by SKU or description" style="flex:1;" />
     </div>
     <div style="max-height: 260px; overflow:auto;">
-      <!-- ADDED: An Action column to enable per-row Shot button -->
       <table id="remainingTable">
         <thead>
           <tr><th>SKU</th><th>Description</th><th>Scanned</th><th>Remaining</th><th>Action</th></tr>
@@ -156,7 +148,6 @@ state.history = obj.history || [];
 
   <div class="card" style="margin-top:18px;">
     <h2>Matched Summary</h2>
-    <!-- ADDED: search bar for Matched Summary -->
     <div class="row" style="margin:6px 0 8px 0;">
       <input id="filterMatched" type="text" placeholder="Search Matched by SKU or description" style="flex:1;" />
     </div>
@@ -167,7 +158,6 @@ state.history = obj.history || [];
     </div>
   </div>
 
-  <!-- Column mapping modal for CSV/XLSX headers -->
   <div class="modal" id="mapModal">
     <div class="panel">
       <h3 style="margin-top:0;">Map your Excel/CSV columns</h3>
@@ -186,29 +176,85 @@ state.history = obj.history || [];
   </div>
 </div>
 
-<!-- SheetJS for Excel parsing (CDN) -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" crossorigin="anonymous"></script>
-
 <script>
 (() => {
   // ------------------------------
   // APP STATE
   // ------------------------------
   const state = {
-    master: new Map(),     // Map(normSku -> { sku, desc, expected, scanned })
-    unknown: new Map(),    // Map(normSku -> count) for not-in-master scans
-    history: [],           // array of { type:'known'|'unknown', norm, ts, [src] }
+    // Entries are stored in a Map keyed by a composite key (see makeKey)
+    // value shape: { key, sku, desc, expected, scanned, manualOnly }
+    master: new Map(),
+    unknown: new Map(),    // Map(normSku -> count)
+    history: [],           // array of { type:'known'|'unknown', key?, norm?, ts, src? }
     options: { caseInsensitive:true, trim:true, ignoreWhitespace:true, dropNonAlnum:true, stripLeadingZeros:false, beep:true },
-    importBuffer: null,     // holds rows while user maps columns
-    // ADDED: stable order for Remaining rows
+    importBuffer: null,
     remainingOrder: {},
     remainingOrderNext: 0,
-    // ADDED: search filters state
     remainingFilter: '',
     matchedFilter: ''
   };
 
-  // Cache DOM elements
+  // ------------------------------
+  // KEY / NORMALIZATION HELPERS
+  // ------------------------------
+  function normalize(s) {
+    if (s == null) return '';
+    let x = String(s);
+    if (state.options.trim) x = x.trim();
+    if (state.options.ignoreWhitespace) x = x.replace(/\s+/g, '');
+    if (state.options.dropNonAlnum) x = x.replace(/[^0-9A-Za-z]/g, '');
+    if (state.options.stripLeadingZeros) x = x.replace(/^0+/, '');
+    if (state.options.caseInsensitive) x = x.toUpperCase();
+    return x;
+  }
+  function isManualOnlySku(normSku){ return !normSku || normSku === 'ABEL'; }
+  function makeKey(sku, desc) {
+    const nSku = normalize(sku);
+    if (isManualOnlySku(nSku)) {
+      const nDesc = (desc ?? '').toString().trim().toUpperCase();
+      return (nSku || '__BLANK__') + '|' + nDesc;
+    }
+    return nSku; // normal SKUs keyed by normalized SKU only
+  }
+  function getEntryByKey(key){ return state.master.get(key); }
+
+  // ------------------------------
+  // CSV/TSV PARSING
+  // ------------------------------
+  function parseDelimited(text) {
+    const delim = text.indexOf('\t') !== -1 ? '\t' : ',';
+    const rows = [];
+    let field = '', row = [], inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inQuotes) {
+        if (c === '"') { if (text[i+1] === '"') { field += '"'; i++; } else inQuotes = false; }
+        else field += c;
+      } else {
+        if (c === '"') inQuotes = true;
+        else if (c === delim) { row.push(field); field=''; }
+        else if (c === '\n') { row.push(field); rows.push(row); row=[]; field=''; }
+        else if (c === '\r') { /* skip */ }
+        else field += c;
+      }
+    }
+    row.push(field); rows.push(row);
+    if (rows.length && rows[rows.length-1].every(x=>x==='')) rows.pop();
+    return rows;
+  }
+  function toHeaderIndex(headers) {
+    const map = {}; headers.forEach((h,i)=> map[String(h||'').trim().toLowerCase()] = i);
+    const skuIdx = ['sku','barcode','upc','ean','id','code','item','itemcode','productcode'].map(k => map[k]).find(i => i !== undefined);
+    const qtyIdx = ['qty','quantity','count','onhand','on_hand','expected','expectedqty'].map(k => map[k]).find(i => i !== undefined);
+    const descIdx = ['description','desc','name','title','product','itemname'].map(k => map[k]).find(i => i !== undefined);
+    return { skuIdx, qtyIdx, descIdx, map };
+  }
+
+  // ------------------------------
+  // DOM CACHE
+  // ------------------------------
   const els = {
     masterFile: document.getElementById('masterFile'),
     loadMasterBtn: document.getElementById('loadMasterBtn'),
@@ -240,7 +286,6 @@ state.history = obj.history || [];
     mapConfirm: document.getElementById('mapConfirm'),
     mapCancel: document.getElementById('mapCancel'),
     mapPreview: document.getElementById('mapPreview'),
-    // ADDED: search input elements
     filterRemaining: document.getElementById('filterRemaining'),
     filterMatched: document.getElementById('filterMatched')
   };
@@ -251,7 +296,6 @@ state.history = obj.history || [];
   // PERSISTENCE
   // ------------------------------
   function save() {
-    // Save the minimal serializable form to localStorage
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       master: Array.from(state.master.entries()),
       unknown: Array.from(state.unknown.entries()),
@@ -259,7 +303,6 @@ state.history = obj.history || [];
       options: state.options,
       remainingOrder: state.remainingOrder,
       remainingOrderNext: state.remainingOrderNext,
-      // ADDED: persist filters
       remainingFilter: state.remainingFilter,
       matchedFilter: state.matchedFilter
     }));
@@ -270,150 +313,53 @@ state.history = obj.history || [];
     try {
       const obj = JSON.parse(raw);
       state.master = new Map(obj.master);
+      // migration: ensure entry.key exists and matches its Map key
+      state.master.forEach((v, k) => { if (!v || typeof v !== 'object') return; if (!v.key) v.key = k; });
+
       state.unknown = new Map(obj.unknown);
       state.history = obj.history || [];
       Object.assign(state.options, obj.options || {});
+
       els.optCase.checked = state.options.caseInsensitive;
       els.optTrim.checked = state.options.trim;
       els.optIgnoreWS.checked = state.options.ignoreWhitespace;
       els.optDropNonAlnum.checked = state.options.dropNonAlnum;
       els.optStripZeros.checked = state.options.stripLeadingZeros;
       els.optBeep.checked = state.options.beep;
-      // ADDED: restore filters
+
       state.remainingFilter = obj.remainingFilter || '';
       state.matchedFilter = obj.matchedFilter || '';
       if (els.filterRemaining) els.filterRemaining.value = state.remainingFilter;
       if (els.filterMatched) els.filterMatched.value = state.matchedFilter;
+
+      state.remainingOrder = obj.remainingOrder || {};
+      state.remainingOrderNext = obj.remainingOrderNext || 0;
+
       renderAll();
     } catch(e) { console.error(e); }
   }
 
   // ------------------------------
-  // REMAINING ORDER HELPERS (ADDED)
+  // REMAINING ORDER HELPERS
   // ------------------------------
   function initRemainingOrder() {
-    // Initialize a stable order for items that are currently remaining (>0)
     state.remainingOrder = state.remainingOrder || {};
-    state.remainingOrderNext = 0;
-    const entries = Array.from(state.master.values());
-    const initial = entries
+    state.remainingOrderNext = state.remainingOrderNext || 0;
+    const initial = Array.from(state.master.values())
       .filter(e => (e.expected || 0) - (e.scanned || 0) > 0)
-      .sort((a,b) => ( (b.expected - b.scanned) - (a.expected - a.scanned) ) || a.sku.localeCompare(b.sku));
+      .sort((a,b) => ((b.expected - b.scanned) - (a.expected - a.scanned)) || (a.sku||'').localeCompare(b.sku||''));
     for (const e of initial) {
-      const norm = normalize(e.sku);
-      if (state.remainingOrder[norm] == null) {
-        state.remainingOrder[norm] = state.remainingOrderNext++;
-      }
+      if (state.remainingOrder[e.key] == null) state.remainingOrder[e.key] = state.remainingOrderNext++;
     }
   }
-  function ensureOrderFor(norm) {
-    if (state.remainingOrder[norm] == null) {
-      state.remainingOrder[norm] = state.remainingOrderNext++;
-    }
+  function ensureOrderForKey(key) {
+    if (state.remainingOrder[key] == null) state.remainingOrder[key] = state.remainingOrderNext++;
   }
 
   // ------------------------------
-  // NORMALIZATION & PARSING
+  // EXCEL LOADER
   // ------------------------------
-  function normalize(s) {
-    // Applies the selected normalization options to make matching tolerant
-    if (s == null) return '';
-    let x = String(s);
-    if (state.options.trim) x = x.trim();
-    if (state.options.ignoreWhitespace) x = x.replace(/\s+/g, '');
-    if (state.options.dropNonAlnum) x = x.replace(/[^0-9A-Za-z]/g, '');
-    if (state.options.stripLeadingZeros) x = x.replace(/^0+/, '');
-    if (state.options.caseInsensitive) x = x.toUpperCase();
-    return x;
-  }
-
-  // Simple CSV/TSV parser with quoted-field support (for pasted data or CSV files)
-  function parseDelimited(text) {
-    const delim = text.indexOf('\t') !== -1 ? '\t' : ',';
-    const rows = [];
-    let field = '', row = [], inQuotes = false;
-    for (let i = 0; i < text.length; i++) {
-      const c = text[i];
-      if (inQuotes) {
-        if (c === '"') { if (text[i+1] === '"') { field += '"'; i++; } else inQuotes = false; }
-        else field += c;
-      } else {
-        if (c === '"') inQuotes = true;
-        else if (c === delim) { row.push(field); field=''; }
-        else if (c === '\n') { row.push(field); rows.push(row); row=[]; field=''; }
-        else if (c === '\r') { /* skip */ }
-        else field += c;
-      }
-    }
-    row.push(field); rows.push(row);
-    if (rows.length && rows[rows.length-1].every(x=>x==='')) rows.pop();
-    return rows;
-  }
-
-  function toHeaderIndex(headers) {
-    // heuristic header detection for SKU/Qty/Desc
-    const map = {}; headers.forEach((h,i)=> map[String(h||'').trim().toLowerCase()] = i);
-    const skuIdx = ['sku','barcode','upc','ean','id','code','item','itemcode','productcode'].map(k => map[k]).find(i => i !== undefined);
-    const qtyIdx = ['qty','quantity','count','onhand','on_hand','expected','expectedqty'].map(k => map[k]).find(i => i !== undefined);
-    const descIdx = ['description','desc','name','title','product','itemname'].map(k => map[k]).find(i => i !== undefined);
-    return { skuIdx, qtyIdx, descIdx, map };
-  }
-
-  function loadMasterFromRows(rows, mapping) {
-    // Builds the state.master Map from an array-of-arrays (first row = headers)
-    if (!rows.length) throw new Error('No rows found');
-    let headers = rows[0];
-    const idx = mapping || toHeaderIndex(headers);
-
-    // If auto-detect fails, open the mapping modal and stash rows for later
-    if (!mapping && (idx.skuIdx === undefined || idx.qtyIdx === undefined)) {
-      openMapper(headers, rows.slice(1,6));
-      state.importBuffer = rows;
-      return;
-    }
-
-    const skuIdx = mapping ? mapping.skuIdx : idx.skuIdx;
-    const qtyIdx = mapping ? mapping.qtyIdx : idx.qtyIdx;
-    const descIdx = mapping ? mapping.descIdx : idx.descIdx;
-
-    const master = new Map();
-    let total = 0;
-    for (let i = 1; i < rows.length; i++) {
-      const r = rows[i]; if (!r || r.length === 0) continue;
-      const skuRaw = r[skuIdx] ?? '';
-      const qtyRaw = r[qtyIdx] ?? '0';
-      const desc = descIdx !== undefined ? (r[descIdx] ?? '') : '';
-      const norm = normalize(skuRaw);
-      const qty = Number(String(qtyRaw).trim().replace(/,/g,'')) || 0;
-
-      // ADDED: allow blank SKU or 'ABEL' to be loaded as manual-only rows that appear in Remaining
-      const isManualOnly = (!norm) || (norm === 'ABEL');
-
-      // Do not skip blank/ABEL: include them as items that must be shot via button
-      // (Other items behave normally.)
-      if (!master.has(norm)) {
-        master.set(norm, { sku: String(skuRaw).trim(), desc: String(desc).trim(), expected: 0, scanned: 0, manualOnly: isManualOnly });
-      }
-      const entry = master.get(norm);
-      entry.expected += qty;
-      // Once manualOnly, always manualOnly for this norm
-      entry.manualOnly = entry.manualOnly || isManualOnly;
-
-      total += qty;
-    }
-    state.master = master;
-    state.unknown = new Map();
-    state.history = [];
-    // ADDED: reset and initialize stable Remaining order
-    state.remainingOrder = {};
-    state.remainingOrderNext = 0;
-    initRemainingOrder();
-    save(); renderAll();
-    toast(`Master loaded: ${master.size} SKUs, total qty ${total}`, true);
-  }
-
   async function loadExcel(file) {
-    // Parse first worksheet of an Excel file via SheetJS
     const ab = await file.arrayBuffer();
     const wb = XLSX.read(ab, { type: 'array' });
     const sheetName = wb.SheetNames[0];
@@ -445,26 +391,84 @@ state.history = obj.history || [];
   function closeMapper(){ els.mapModal.style.display = 'none'; }
 
   // ------------------------------
-  // SCANNING + NEW MANUAL SHOT FEATURE
+  // MASTER LOAD
   // ------------------------------
+  function loadMasterFromRows(rows, mapping) {
+    if (!rows.length) throw new Error('No rows found');
+    const headers = rows[0];
+    const idx = mapping || toHeaderIndex(headers);
+
+    if (!mapping && (idx.skuIdx === undefined || idx.qtyIdx === undefined)) {
+      openMapper(headers, rows.slice(1,6));
+      state.importBuffer = rows;
+      return;
+    }
+
+    const skuIdx = mapping ? mapping.skuIdx : idx.skuIdx;
+    const qtyIdx = mapping ? mapping.qtyIdx : idx.qtyIdx;
+    const descIdx = mapping ? mapping.descIdx : idx.descIdx;
+
+    const master = new Map();
+    let total = 0;
+
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i]; if (!r || r.length === 0) continue;
+      const skuRaw = r[skuIdx] ?? '';
+      const qtyRaw = r[qtyIdx] ?? '0';
+      const descRaw = descIdx !== undefined ? (r[descIdx] ?? '') : '';
+
+      const qty = Number(String(qtyRaw).trim().replace(/,/g,'')) || 0;
+      const normSku = normalize(skuRaw);
+      const manualOnly = isManualOnlySku(normSku);
+      const key = makeKey(skuRaw, descRaw);
+
+      if (!master.has(key)) {
+        master.set(key, { key, sku: String(skuRaw).trim(), desc: String(descRaw).trim(), expected: 0, scanned: 0, manualOnly });
+      }
+      const entry = master.get(key);
+      entry.expected += qty;
+      entry.manualOnly = entry.manualOnly || manualOnly;
+
+      total += qty;
+    }
+
+    state.master = master;
+    state.unknown = new Map();
+    state.history = [];
+    state.remainingOrder = {}; state.remainingOrderNext = 0; // reset stable order
+    initRemainingOrder();
+    save(); renderAll();
+    toast(`Master loaded: ${master.size} items, total qty ${total}`, true);
+  }
+
+  // ------------------------------
+  // SCANNING (with double-scan guard)
+  // ------------------------------
+  let lastScan = { norm:null, ts:0 };
+  const DOUBLE_SCAN_MS = 300;
+
   function scan(value) {
-    // Handles scans or typed SKUs (Enter)
     const ts = new Date().toISOString();
     const norm = normalize(value);
-    if (!norm) return; // still ignore completely blank input from the scanner/keyboard
+    if (!norm) return;
 
-    // Block direct scanning of the reserved 'ABEL' code regardless of master
+    // double-scan guard
+    const now = Date.now();
+    if (norm === lastScan.norm && now - lastScan.ts < DOUBLE_SCAN_MS) return;
+    lastScan = { norm, ts: now };
+
     if (norm === 'ABEL') { flash('ABEL must be marked with the Shot button', false); beep(false); return; }
 
-    const entry = state.master.get(norm);
+    // find an entry that is not manualOnly and whose normalized SKU matches
+    let entry = null;
+    for (const e of state.master.values()) {
+      if (!e.manualOnly && normalize(e.sku) === norm) { entry = e; break; }
+    }
+
     if (entry) {
-      // ADDED: items flagged manualOnly (blank or ABEL at import) cannot be incremented by typing/scanning
-      if (entry.manualOnly) {
-        flash('This item must be marked using the Shot button', false); beep(false); return;
-      }
       entry.scanned += 1;
-      state.history.push({ type:'known', norm, ts });
-      flash('MATCH: ' + entry.sku, true); beep(true);
+      state.history.push({ type:'known', key: entry.key, norm, ts });
+      flash('MATCH: ' + (entry.sku || norm), true); beep(true);
     } else {
       const prev = state.unknown.get(norm) || 0;
       state.unknown.set(norm, prev + 1);
@@ -475,38 +479,32 @@ state.history = obj.history || [];
     save(); renderAll();
   }
 
-  function manualShot(skuOrNorm, amount = 1) {
-    // ADJUSTED: only increment if there's still quantity remaining; keep row until < 1 remains
-    const norm = normalize(skuOrNorm);
-    const entry = state.master.get(norm);
-    if (!entry) { flash('Not in master: ' + skuOrNorm, false); beep(false); return; }
+  function manualShot(key, amount = 1) {
+    const entry = getEntryByKey(key);
+    if (!entry) { flash('Not in master', false); beep(false); return; }
 
-    const beforeRemaining = Math.max(0, (entry.expected || 0) - (entry.scanned || 0));
-    if (beforeRemaining <= 0) {
-      // nothing left to shoot; show a gentle notice
-      flash('Already complete: ' + (entry.sku || norm), true); beep(true);
-      return;
-    }
+    const before = Math.max(0, (entry.expected||0) - (entry.scanned||0));
+    if (before <= 0) { flash('Already complete: ' + (entry.sku || '(no sku)'), true); beep(true); return; }
 
     entry.scanned = (entry.scanned || 0) + amount;
-    state.history.push({ type: 'known', norm, ts: new Date().toISOString(), src: 'manual' });
+    state.history.push({ type: 'known', key: entry.key, ts: new Date().toISOString(), src: 'manual' });
     save(); renderAll();
 
-    const afterRemaining = Math.max(0, (entry.expected || 0) - (entry.scanned || 0));
-    if (afterRemaining <= 0) {
-      flash('Completed: ' + (entry.sku || norm), true);
-    } else {
-      flash(`Shot +${amount} → ${afterRemaining} remaining`, true);
-    }
+    const after = Math.max(0, (entry.expected||0) - (entry.scanned||0));
+    flash(after <= 0 ? ('Completed: ' + (entry.sku || '(no sku)')) : (`Shot +${amount} → ${after} remaining`), true);
     beep(true);
   }
 
   function undo() {
-    // Reverts the last scan (typed, scanned, or manual)
     const last = state.history.pop();
     if (!last) return;
-    if (last.type === 'known') { const e = state.master.get(last.norm); if (e && e.scanned > 0) e.scanned -= 1; }
-    else { const c = state.unknown.get(last.norm) || 0; if (c <= 1) state.unknown.delete(last.norm); else state.unknown.set(last.norm, c - 1); }
+    if (last.type === 'known') {
+      const e = last.key ? getEntryByKey(last.key) : null;
+      if (e && e.scanned > 0) e.scanned -= 1;
+    } else {
+      const c = state.unknown.get(last.norm) || 0;
+      if (c <= 1) state.unknown.delete(last.norm); else state.unknown.set(last.norm, c - 1);
+    }
     save(); renderAll(); toast('Undid last scan', true);
   }
 
@@ -514,11 +512,11 @@ state.history = obj.history || [];
   // RENDERING
   // ------------------------------
   function renderAll() {
-    const entries = Array.from(state.master.values());(state.master.values());
+    const entries = Array.from(state.master.values());
     const expectedDistinct = entries.length;
-    const expectedQty = entries.reduce((a, e) => a + e.expected, 0);
-    const scannedQty = entries.reduce((a, e) => a + e.scanned, 0);
-    const remainingQty = entries.reduce((a, e) => a + Math.max(0, e.expected - e.scanned), 0);
+    const expectedQty = entries.reduce((a, e) => a + (e.expected||0), 0);
+    const scannedQty = entries.reduce((a, e) => a + (e.scanned||0), 0);
+    const remainingQty = entries.reduce((a, e) => a + Math.max(0, (e.expected||0) - (e.scanned||0)), 0);
     const unknownQty = Array.from(state.unknown.values()).reduce((a, n) => a + n, 0);
     els.kExpected.textContent = expectedDistinct;
     els.kExpectedQty.textContent = expectedQty;
@@ -526,49 +524,42 @@ state.history = obj.history || [];
     els.kRemainingQty.textContent = remainingQty;
     els.kUnknownQty.textContent = unknownQty;
 
-    // Remaining list (only items still short), sorted by largest remainder
-    const remaining = entries
-      .filter(e => e.expected - e.scanned > 0);
-
-    // ADDED: text filter for Remaining
+    // Remaining
+    const remaining = entries.filter(e => (e.expected||0) - (e.scanned||0) > 0);
     const qRem = (state.remainingFilter || '').toString().trim().toUpperCase();
     const filteredRemaining = qRem ? remaining.filter(e => {
-      const skuNorm = normalize(e.sku);
+      const skuU = (e.sku || '').toString().toUpperCase();
       const descU = (e.desc || '').toUpperCase();
-      return skuNorm.includes(qRem) || descU.includes(qRem);
+      return skuU.includes(qRem) || descU.includes(qRem);
     }) : remaining;
 
-    // Keep stable position by sorting with saved order index
-    for (const e of filteredRemaining) {
-      ensureOrderFor(normalize(e.sku));
-    }
-    filteredRemaining.sort((a,b) => state.remainingOrder[normalize(a.sku)] - state.remainingOrder[normalize(b.sku)]);
+    for (const e of filteredRemaining) ensureOrderForKey(e.key);
+    filteredRemaining.sort((a,b) => state.remainingOrder[a.key] - state.remainingOrder[b.key]);
 
     renderTable(els.remainingTable, filteredRemaining.map(e => {
-      const normKey = normalize(e.sku);
-      const remainingLeft = Math.max(0, e.expected - e.scanned);
+      const remainingLeft = Math.max(0, (e.expected||0) - (e.scanned||0));
       return [
         e.sku || '(no sku)',
         e.desc || '',
-        String(e.scanned),
+        String(e.scanned||0),
         String(remainingLeft),
-        `<button class=\"mini\" data-action=\"shot\" data-norm=\"${normKey}\">Shot +1</button>`
+        `<button class="mini" data-action="shot" data-key="${e.key}">Shot +1</button>`
       ];
     }));
 
-    // Full matched summary with status highlight
-    // ADDED: filter Matched Summary by query then sort by SKU
+    // Matched Summary
     const qMat = (state.matchedFilter || '').toString().trim().toUpperCase();
     const matched = entries.filter(e => {
       if (!qMat) return true;
-      const skuNorm = normalize(e.sku);
+      const skuU = (e.sku || '').toString().toUpperCase();
       const descU = (e.desc || '').toUpperCase();
-      return skuNorm.includes(qMat) || descU.includes(qMat);
-    }).sort((a,b)=> a.sku.localeCompare(b.sku));
+      return skuU.includes(qMat) || descU.includes(qMat);
+    }).sort((a,b)=> (a.sku||'').localeCompare(b.sku||''));
+
     renderTable(els.matchedTable, matched.map(e => {
-      const over = Math.max(0, e.scanned - e.expected);
-      const status = over > 0 ? 'over' : (e.scanned < e.expected ? 'short' : 'ok');
-      return { rowClass: status, cells: [e.sku||'(no sku)', e.desc||'', String(e.expected), String(e.scanned), String(over), `<span class="pill ${status}">${status.toUpperCase()}</span>`] };
+      const over = Math.max(0, (e.scanned||0) - (e.expected||0));
+      const status = over > 0 ? 'over' : ((e.scanned||0) < (e.expected||0) ? 'short' : 'ok');
+      return { rowClass: status, cells: [e.sku||'(no sku)', e.desc||'', String(e.expected||0), String(e.scanned||0), String(over), `<span class="pill ${status}">${status.toUpperCase()}</span>`] };
     }), true);
 
     // Unknown items summary
@@ -578,8 +569,12 @@ state.history = obj.history || [];
     // Recent log
     const logLines = state.history.slice(-50).map(h => {
       const time = new Date(h.ts).toLocaleTimeString();
-      if (h.type === 'known') { const e = state.master.get(h.norm); return `[${time}] OK  → ${e ? e.sku : h.norm}${h.src==='manual' ? ' (manual)' : ''}`; }
-      else return `[${time}] ??? → ${h.norm}`;
+      if (h.type === 'known') {
+        const e = h.key ? getEntryByKey(h.key) : null;
+        return `[${time}] OK  → ${e ? (e.sku || e.key) : (h.norm || '')}${h.src==='manual' ? ' (manual)' : ''}`;
+      } else {
+        return `[${time}] ??? → ${h.norm}`;
+      }
     });
     els.log.textContent = logLines.reverse().join('\n');
   }
@@ -592,7 +587,6 @@ state.history = obj.history || [];
       const cells = withClass ? r.cells : r;
       for (const c of cells) {
         const td = document.createElement('td');
-        // allow a bit of inline HTML for status pills / buttons
         if (typeof c === 'string' && c.startsWith('<')) td.innerHTML = c; else td.textContent = c;
         tr.appendChild(td);
       }
@@ -632,10 +626,11 @@ state.history = obj.history || [];
   [els.optCase, els.optTrim, els.optIgnoreWS, els.optDropNonAlnum, els.optStripZeros, els.optBeep]
     .forEach(el => el.addEventListener('change', () => { setOptionsFromUI(); renderAll(); }));
 
-  function focusScan(){ els.scanInput.focus({ preventScroll:true }); }
-  // ADJUSTED: only auto-focus scanInput if click is outside the search bars
+  function focusScan(){ els.scanInput?.focus({ preventScroll:true }); }
   document.addEventListener('click', (e)=>{
-    if (e.target === els.filterRemaining || e.target === els.filterMatched) return;
+    const t = e.target;
+    // Don’t steal focus if user is interacting with inputs, selects, textareas, buttons or the modal
+    if (t.closest('input, textarea, select, button, .modal')) return;
     focusScan();
   });
   window.addEventListener('focus', focusScan);
@@ -649,7 +644,7 @@ state.history = obj.history || [];
   });
   els.scanInput.addEventListener('input', (e)=>{
     const v = e.currentTarget.value;
-    if (v && v.endsWith('\\n')) { e.currentTarget.value = v.replace(/\\n+$/,''); if (e.currentTarget.value) scan(e.currentTarget.value); e.currentTarget.value=''; }
+    if (v && v.endsWith('\n')) { e.currentTarget.value = v.replace(/\n+$/,''); if (e.currentTarget.value) scan(e.currentTarget.value); e.currentTarget.value=''; }
   });
 
   els.undoBtn.addEventListener('click', undo);
@@ -659,12 +654,11 @@ state.history = obj.history || [];
     save(); renderAll(); });
 
   els.exportBtn.addEventListener('click', ()=>{
-    // Export reconciliation as CSV
     const rows = [['sku','description','expected_qty','scanned_qty','over','status']];
     for (const e of state.master.values()) {
-      const over = Math.max(0, e.scanned - e.expected);
-      const status = over > 0 ? 'OVER' : (e.scanned < e.expected ? 'SHORT' : 'OK');
-      rows.push([e.sku, e.desc || '', e.expected, e.scanned, over, status]);
+      const over = Math.max(0, (e.scanned||0) - (e.expected||0));
+      const status = over > 0 ? 'OVER' : ((e.scanned||0) < (e.expected||0) ? 'SHORT' : 'OK');
+      rows.push([e.sku || '', e.desc || '', e.expected||0, e.scanned||0, over, status]);
     }
     if (state.unknown.size) { rows.push([]); rows.push(['unknown_sku','count']); for (const [sku,count] of state.unknown.entries()) rows.push([sku,count]); }
     const csv = rows.map(r => r.map(cell => { const s = String(cell ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; }).join(',')).join('\n');
@@ -672,7 +666,6 @@ state.history = obj.history || [];
   });
 
   els.loadMasterBtn.addEventListener('click', async ()=>{
-    // Load CSV or Excel from file input
     const f = els.masterFile.files?.[0]; if (!f) { alert('Choose a file first.'); return; }
     try {
       if (/\.(xlsx|xls)$/i.test(f.name) || (f.type && (f.type.includes('sheet') || f.type.includes('excel')))) {
@@ -684,22 +677,15 @@ state.history = obj.history || [];
   });
 
   els.loadPasteBtn.addEventListener('click', ()=>{
-    // Load data from pasted rows (CSV/TSV)
     const text = els.masterPaste.value;
     if (!text.trim()) { alert('Paste data first.'); return; }
     try { const rows = parseDelimited(text); loadMasterFromRows(rows); } catch(e){ alert(e.message || String(e)); }
   });
 
-  // ADDED: search listeners (simple, no debounce)
-  if (els.filterRemaining) {
-    els.filterRemaining.addEventListener('input', (e)=>{ state.remainingFilter = e.target.value; save(); renderAll(); });
-  }
-  if (els.filterMatched) {
-    els.filterMatched.addEventListener('input', (e)=>{ state.matchedFilter = e.target.value; save(); renderAll(); });
-  }
+  els.filterRemaining.addEventListener('input', (e)=>{ state.remainingFilter = e.target.value; save(); renderAll(); });
+  els.filterMatched.addEventListener('input', (e)=>{ state.matchedFilter = e.target.value; save(); renderAll(); });
 
   els.mapConfirm.addEventListener('click', ()=>{
-    // Apply selected column mapping from modal
     if (!state.importBuffer) return closeMapper();
     const skuIdx = els.mapSku.value === '' ? undefined : Number(els.mapSku.value);
     const qtyIdx = els.mapQty.value === '' ? undefined : Number(els.mapQty.value);
@@ -711,16 +697,16 @@ state.history = obj.history || [];
   });
   els.mapCancel.addEventListener('click', ()=>{ state.importBuffer = null; closeMapper(); });
 
-  // ADDED: event delegation to catch clicks on per-row buttons in Remaining table
+  // Per-row Shot button
   els.remainingTable.addEventListener('click', (ev) => {
     const btn = ev.target.closest('[data-action="shot"]');
     if (!btn) return;
-    manualShot(btn.dataset.norm, 1);
+    manualShot(btn.dataset.key, 1);
   });
 
   // Init
   load();
-  function focusScan(){ els.scanInput.focus({ preventScroll:true }); }
+  function focusScan(){ els.scanInput?.focus({ preventScroll:true }); }
   focusScan();
 })();
 </script>
