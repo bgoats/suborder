@@ -168,11 +168,74 @@
   </div>
 </div>
 
+<!-- Socket.IO client -->
+<script src="/socket.io/socket.io.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" crossorigin="anonymous"></script>
 <script>
 (() => {
   // ------------------------------
-  // APP STATE
+  // REAL-TIME: socket + helpers
+  // ------------------------------
+  const socket = io();
+  let sharedVersion = 0;
+  let isApplyingRemote = false;
+  const stationName = (localStorage.getItem("station_name")) || (() => {
+    const n = prompt("Station name (e.g., 'Scanner-1')", location.hostname || "station");
+    if (n) localStorage.setItem("station_name", n);
+    return n || "station";
+  })();
+
+  function snapshotState(){
+    return {
+      master: Array.from(state.master.entries()),
+      unknown: Array.from(state.unknown.entries()),
+      history: state.history,
+      options: state.options,
+      remainingOrder: state.remainingOrder,
+      remainingOrderNext: state.remainingOrderNext,
+      remainingFilter: state.remainingFilter,
+      matchedFilter: state.matchedFilter
+    };
+  }
+  function hydrateFromSnapshot(obj){
+    state.master = new Map(obj.master || []);
+    state.master.forEach((v,k)=>{ if (v && typeof v === "object") { if (!v.key) v.key = k; } });
+    state.unknown = new Map(obj.unknown || []);
+    state.history = obj.history || [];
+    Object.assign(state.options, obj.options || {});
+    state.remainingOrder = obj.remainingOrder || {};
+    state.remainingOrderNext = obj.remainingOrderNext || 0;
+    state.remainingFilter = obj.remainingFilter || '';
+    state.matchedFilter = obj.matchedFilter || '';
+    // reflect options & filters in UI
+    els.optCase.checked = state.options.caseInsensitive;
+    els.optTrim.checked = state.options.trim;
+    els.optIgnoreWS.checked = state.options.ignoreWhitespace;
+    els.optDropNonAlnum.checked = state.options.dropNonAlnum;
+    els.optStripZeros.checked = state.options.stripLeadingZeros;
+    els.optBeep.checked = state.options.beep;
+    if (els.filterRemaining) els.filterRemaining.value = state.remainingFilter;
+    if (els.filterMatched) els.filterMatched.value = state.matchedFilter;
+    renderAll();
+  }
+  function broadcast(){
+    if (isApplyingRemote) return;
+    socket.emit("state:updateFull", {
+      version: sharedVersion,
+      state: snapshotState(),
+      actor: stationName
+    });
+  }
+  socket.on("state:full", ({ version, state: remote }) => {
+    isApplyingRemote = true;
+    sharedVersion = version;
+    hydrateFromSnapshot(remote || {});
+    isApplyingRemote = false;
+  });
+  socket.on("state:error", (e) => alert(e?.message || "Sync error"));
+
+  // ------------------------------
+  // APP STATE (your original logic)
   // ------------------------------
   const state = {
     master: new Map(),
@@ -283,43 +346,19 @@
   const STORAGE_KEY = 'inv-scan-v3-scanned-remaining';
 
   // ------------------------------
-  // PERSISTENCE
+  // PERSISTENCE (local backup + realtime broadcast)
   // ------------------------------
   function save() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      master: Array.from(state.master.entries()),
-      unknown: Array.from(state.unknown.entries()),
-      history: state.history,
-      options: state.options,
-      remainingOrder: state.remainingOrder,
-      remainingOrderNext: state.remainingOrderNext,
-      remainingFilter: state.remainingFilter,
-      matchedFilter: state.matchedFilter
-    }));
+    // local backup so a single device can recover
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshotState()));
+    // broadcast to all clients via server
+    broadcast();
   }
   function load() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
     try {
-      const obj = JSON.parse(raw);
-      state.master = new Map(obj.master);
-      state.master.forEach((v, k) => { if (!v || typeof v !== 'object') return; if (!v.key) v.key = k; });
-      state.unknown = new Map(obj.unknown);
-      state.history = obj.history || [];
-      Object.assign(state.options, obj.options || {});
-      els.optCase.checked = state.options.caseInsensitive;
-      els.optTrim.checked = state.options.trim;
-      els.optIgnoreWS.checked = state.options.ignoreWhitespace;
-      els.optDropNonAlnum.checked = state.options.dropNonAlnum;
-      els.optStripZeros.checked = state.options.stripLeadingZeros;
-      els.optBeep.checked = state.options.beep;
-      state.remainingFilter = obj.remainingFilter || '';
-      state.matchedFilter = obj.matchedFilter || '';
-      if (els.filterRemaining) els.filterRemaining.value = state.remainingFilter;
-      if (els.filterMatched) els.filterMatched.value = state.matchedFilter;
-      state.remainingOrder = obj.remainingOrder || {};
-      state.remainingOrderNext = obj.remainingOrderNext || 0;
-      renderAll();
+      hydrateFromSnapshot(JSON.parse(raw));
     } catch(e) { console.error(e); }
   }
 
@@ -543,7 +582,7 @@
       const status = (e.scanned||0) < (e.expected||0) ? 'short' : 'ok';
       return { rowClass: status, cells: [
         e.sku||'(no sku)', e.desc||'', String(e.expected||0), String(e.scanned||0),
-        `<span class=\"pill ${status}\">${status.toUpperCase()}</span>`
+        `<span class="pill ${status}">${status.toUpperCase()}</span>`
       ]};
     }), true);
 
@@ -583,9 +622,7 @@
   let audioCtx = null;
   function ensureAudio(){ if (!audioCtx){ try{ audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }catch{} } }
   function beep(ok){ if(!state.options.beep) return; ensureAudio(); if(!audioCtx) return;
-    const duration = ok ? 0.10 : 0.22; // slightly longer
-    const freq = ok ? 900 : 180;       // success higher, error low buzz
-    const peak = ok ? 0.18 : 0.22;     // louder overall
+    const duration = ok ? 0.10 : 0.22; const freq = ok ? 900 : 180; const peak = ok ? 0.18 : 0.22;
     const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
     osc.type = ok ? 'square' : 'sawtooth'; osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
     osc.connect(gain); gain.connect(audioCtx.destination);
@@ -688,6 +725,7 @@
     manualShot(btn.dataset.key, 1);
   });
 
+  // Local backup first; server snapshot will overwrite after socket connects
   load();
   function focusScan(){ els.scanInput?.focus({ preventScroll:true }); }
   focusScan();
